@@ -2,6 +2,7 @@ import { describe, expect, test } from '@jest/globals';
 
 import {
     AGENT_TOOL_CALLING_SKIP_REASONS,
+    filterAgentToolSelection,
     isAgentToolCallingEnabled,
     resolveAgentToolCallingPlan,
     runAgentToolCallLoop,
@@ -22,6 +23,14 @@ const READ_TOOL = {
         name: 'compendium_read',
         description: 'Read a compendium entry',
         parameters: { type: 'object', properties: { id: { type: 'string' } } },
+    },
+};
+const PATHFINDER_ROLL_TOOL = {
+    type: 'function',
+    function: {
+        name: 'pathfinder_roll',
+        description: 'Roll dice for a Pathfinder skill check',
+        parameters: { type: 'object', properties: { skill: { type: 'string' } } },
     },
 };
 
@@ -426,4 +435,75 @@ describe('resolveAgentToolCallingPlan', () => {
             expect(summarizeAgentToolCallingPlan(plan)).toEqual({ status: 'skipped', reason });
         });
     }
+});
+
+describe('filterAgentToolSelection', () => {
+    const ALL_TOOLS = [SEARCH_TOOL, READ_TOOL, PATHFINDER_ROLL_TOOL];
+
+    test('an agent left on "all" (the default) keeps every currently registered tool', () => {
+        expect(filterAgentToolSelection({ toolCalling: { mode: 'all' } }, ALL_TOOLS)).toBe(ALL_TOOLS);
+        expect(filterAgentToolSelection({ toolCalling: {} }, ALL_TOOLS)).toBe(ALL_TOOLS);
+        expect(filterAgentToolSelection({}, ALL_TOOLS)).toBe(ALL_TOOLS);
+    });
+
+    test('an explicit selection excludes every other currently registered tool', () => {
+        const agent = { toolCalling: { mode: 'selected', selectedTools: ['compendium_search', 'compendium_read'] } };
+
+        expect(filterAgentToolSelection(agent, ALL_TOOLS)).toEqual([SEARCH_TOOL, READ_TOOL]);
+    });
+
+    test('an explicit selection naming an unregistered tool yields no match for it', () => {
+        const agent = { toolCalling: { mode: 'selected', selectedTools: ['nonexistent_tool'] } };
+
+        expect(filterAgentToolSelection(agent, ALL_TOOLS)).toEqual([]);
+    });
+
+    test('an empty explicit selection attaches no tools even though tools are registered', () => {
+        const agent = { toolCalling: { mode: 'selected', selectedTools: [] } };
+
+        expect(filterAgentToolSelection(agent, ALL_TOOLS)).toEqual([]);
+    });
+});
+
+describe('an agent scoped to one extension\'s tools via explicit selection', () => {
+    test('never calls another extension\'s tool even though it is registered', async () => {
+        const agent = {
+            category: 'companion',
+            execution: 'companion',
+            toolCalling: { enabled: true, mode: 'selected', selectedTools: ['compendium_search', 'compendium_read'] },
+        };
+        const PROFILE = { id: 'profile-1', api: 'claude', model: 'claude-sonnet' };
+        const CLAUDE_API = { selected: 'openai', source: 'claude' };
+
+        const plan = await resolveAgentToolCallingPlan({
+            agent,
+            profile: PROFILE,
+            apiMap: CLAUDE_API,
+            mainApi: 'openai',
+            isSupported: () => true,
+            // Simulates two tool-providing extensions both currently registered with the shared tool manager.
+            getTools: async () => filterAgentToolSelection(agent, [SEARCH_TOOL, READ_TOOL, PATHFINDER_ROLL_TOOL]),
+        });
+
+        expect(plan.status).toBe('enabled');
+        expect(plan.tools).toEqual([SEARCH_TOOL, READ_TOOL]);
+
+        const rollCall = toolCallResponse({ name: 'pathfinder_roll' });
+        const harness = createHarness({
+            responses: [rollCall, textResponse('Vex hunts heretics on Gilead Primus.')],
+            rounds: [{ invocations: [] }],
+        });
+
+        const result = await runAgentToolCallLoop({
+            messages: BASE_MESSAGES,
+            tools: plan.tools,
+            recurseLimit: 5,
+            ...harness.deps,
+        });
+
+        for (const request of harness.requests) {
+            expect(request.tools ?? []).not.toContainEqual(PATHFINDER_ROLL_TOOL);
+        }
+        expect(result.invocations.some(invoked => invoked.name === 'pathfinder_roll')).toBe(false);
+    });
 });

@@ -1283,16 +1283,46 @@ export function normalizeToolDef(raw = {}) {
 }
 
 /**
+ * Normalizes the explicit tool name selection for an agent's tool calling.
+ * Names are kept case-sensitive and as-is since they must match ToolManager
+ * registration names exactly.
+ * @param {unknown} [value]
+ * @returns {string[]}
+ */
+function normalizeToolNameSelection(value = []) {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    const seenNames = new Set();
+    const names = [];
+
+    for (const rawValue of value) {
+        const name = String(rawValue ?? '').trim();
+        if (!name || seenNames.has(name)) continue;
+
+        seenNames.add(name);
+        names.push(name);
+        if (names.length >= 200) break;
+    }
+
+    return names;
+}
+
+/**
  * Normalizes an agent's own-request tool-calling settings. Agents saved before
- * the setting existed load with tool calling off.
+ * the setting existed load with tool calling off, "all tools" selection, and
+ * an empty explicit selection.
  * @param {unknown} [raw]
- * @returns {{ enabled: boolean }}
+ * @returns {{ enabled: boolean, mode: 'all'|'selected', selectedTools: string[] }}
  */
 export function normalizeAgentToolCallingConfig(raw = {}) {
     const config = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
     return {
         // @ts-ignore
         enabled: config.enabled === true,
+        mode: config.mode === 'selected' ? 'selected' : 'all',
+        selectedTools: normalizeToolNameSelection(config.selectedTools),
     };
 }
 

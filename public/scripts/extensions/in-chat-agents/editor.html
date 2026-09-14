@@ -75,6 +75,20 @@
         <div class="ica--editor-row" id="ica--tool-calling-row">
             <label class="checkbox_label"><input type="checkbox" id="ica--editor-toolCalling-enabled" /><span>Allow this agent to call registered tools <small>(companion and intercept agents with a connection profile; only the agent's final text is used)</small></span></label>
         </div>
+        <div class="ica--editor-row" id="ica--tool-calling-mode-row" style="display:none">
+            <label>Tool Selection
+                <select id="ica--editor-toolCalling-mode" class="text_pole">
+                    <option value="all">All currently registered tools</option>
+                    <option value="selected">Only selected tools</option>
+                </select>
+            </label>
+        </div>
+        <div class="ica--editor-row" id="ica--tool-calling-selected-row" style="display:none">
+            <label>Selected Tools
+                <select id="ica--editor-toolCalling-selectedTools" class="text_pole" multiple size="5"></select>
+            </label>
+            <div class="ica--regex-note">Only these tools are attached to this agent's request, even if other tools are registered.</div>
+        </div>
         <textarea id="ica--editor-prompt" class="text_pole textarea_compact" rows="8" placeholder="Write your agent prompt here. Supports macros: &#123;&#123;char&#125;&#125;, &#123;&#123;user&#125;&#125;, &#123;&#123;random::a::b::c&#125;&#125;, etc."></textarea>
     </div>
 

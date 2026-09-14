@@ -97,4 +97,22 @@ describe('agent tool call loop wiring', () => {
         expect(indexSource).toContain('editorEl.find(\'#ica--tool-calling-row\').toggle(category !== \'tool\');');
         expect(getFunctionSource(indexSource, 'buildUpdatedAgentFromTemplate')).toContain('updatedAgent.toolCalling = structuredClone(agent.toolCalling ?? updatedAgent.toolCalling);');
     });
+
+    test('the runner filters registered tools down to an agent\'s explicit selection before attaching them', () => {
+        expect(runnerSource).toContain('    filterAgentToolSelection,\n');
+
+        const source = getFunctionSource(runnerSource, 'resolveAgentRequestToolCalling');
+        expect(source).toContain('return filterAgentToolSelection(agent, toolData.tools ?? []);');
+    });
+
+    test('the agent editor offers an explicit tool picker populated from the shared tool manager', () => {
+        expect(editorHtml).toContain('id="ica--editor-toolCalling-mode"');
+        expect(editorHtml).toContain('id="ica--editor-toolCalling-selectedTools"');
+        expect(indexSource).toContain('async function getRegisteredToolNames()');
+        expect(indexSource).toContain('ToolManager.registerFunctionToolsOpenAI(toolData)');
+        expect(indexSource).toContain('function updateToolCallingSelectionOptions()');
+        expect(indexSource).toContain('editorEl.find(\'#ica--editor-toolCalling-mode\').val(agent.toolCalling?.mode === \'selected\' ? \'selected\' : \'all\');');
+        expect(indexSource).toContain('mode: editorEl.find(\'#ica--editor-toolCalling-mode\').val()?.toString() === \'selected\' ? \'selected\' : \'all\',');
+        expect(indexSource).toContain('selectedTools: normalizeCompanionBatchAgentIds(editorEl.find(\'#ica--editor-toolCalling-selectedTools\').val()),');
+    });
 });

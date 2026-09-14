@@ -35,6 +35,24 @@ export function isAgentToolCallingEnabled(agent) {
 }
 
 /**
+ * Restricts OpenAI-format function tools to an agent's explicit selection.
+ * Agents left on "all" (the default) see every currently registered tool.
+ * @param {any} agent
+ * @param {object[]} tools OpenAI-format function tools
+ * @returns {object[]}
+ */
+export function filterAgentToolSelection(agent, tools) {
+    if (agent?.toolCalling?.mode !== 'selected') {
+        return tools;
+    }
+
+    const selectedNames = new Set(
+        Array.isArray(agent.toolCalling.selectedTools) ? agent.toolCalling.selectedTools : [],
+    );
+    return tools.filter(tool => selectedNames.has(tool?.function?.name));
+}
+
+/**
  * Decides whether an agent request attaches tools, reporting a skip reason instead of throwing.
  * @param {object} options
  * @param {any} options.agent

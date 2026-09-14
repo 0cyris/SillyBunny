@@ -71,6 +71,12 @@ beforeAll(async () => {
         event_types: {},
     }));
 
+    await jest.unstable_mockModule('../public/scripts/tool-calling.js', () => ({
+        ToolManager: {
+            registerFunctionToolsOpenAI: jest.fn(async () => {}),
+        },
+    }));
+
     await jest.unstable_mockModule('../public/scripts/extensions/in-chat-agents/agent-store.js', () => ({
         AGENT_CATEGORIES: {},
         AGENT_SUBCATEGORIES: {},

@@ -6,6 +6,7 @@ import { download, escapeHtml, escapeRegex, getSortableDelay, uuidv4 } from '../
 import { activateSendButtons, CLIENT_VERSION, chat, deactivateSendButtons, getCurrentChatId, getRequestHeaders, generateQuietPrompt, is_send_press, normalizeContentText, saveChatDebounced, saveSettingsDebounced, substituteParams } from '../../../script.js';
 import { eventSource, event_types } from '../../events.js';
 import { is_group_generating } from '../../group-chats.js';
+import { ToolManager } from '../../tool-calling.js';
 import {
     areAgentsGloballyEnabled,
     getAgents,
@@ -338,6 +339,16 @@ function normalizeCompanionBatchAgentIds(value = []) {
     }
 
     return ids;
+}
+
+async function getRegisteredToolNames() {
+    const toolData = {};
+    try {
+        await ToolManager.registerFunctionToolsOpenAI(toolData);
+    } catch (error) {
+        console.warn('[InChatAgents] Failed to collect registered tools for the agent editor.', error);
+    }
+    return (toolData.tools ?? []).map(tool => tool?.function?.name).filter(Boolean);
 }
 
 function getCompanionAgentOptionLabel(agent) {
@@ -2897,6 +2908,7 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
     }
 
     const editorEl = $(html);
+    const registeredToolNames = await getRegisteredToolNames();
 
     // Populate fields
     editorEl.find('#ica--editor-name').val(agent.name);
@@ -2912,6 +2924,8 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
     });
     editorEl.find('#ica--editor-modelOverride').val(agent.modelOverride || '');
     editorEl.find('#ica--editor-toolCalling-enabled').prop('checked', agent.toolCalling?.enabled === true);
+    editorEl.find('#ica--editor-toolCalling-mode').val(agent.toolCalling?.mode === 'selected' ? 'selected' : 'all');
+    const savedToolCallingSelectedTools = normalizeCompanionBatchAgentIds(agent.toolCalling?.selectedTools);
 
     const companion = getCompanionConfig(agent);
     editorEl.find('#ica--editor-companion-trigger').val(companion.trigger);
@@ -3238,6 +3252,40 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
         }
     }
 
+    function updateToolCallingSelectionOptions() {
+        const select = editorEl.find('#ica--editor-toolCalling-selectedTools');
+        const currentSelection = normalizeCompanionBatchAgentIds(select.val());
+        const selectedNames = currentSelection.length ? currentSelection : savedToolCallingSelectedTools;
+        const selectedKeys = new Set(selectedNames.map(name => name.toLowerCase()));
+        const availableKeys = new Set(registeredToolNames.map(name => name.toLowerCase()));
+
+        select.empty();
+        if (!registeredToolNames.length && !selectedNames.length) {
+            select.append($('<option>').val('').text('No registered tools').prop('disabled', true));
+            return;
+        }
+
+        for (const name of registeredToolNames) {
+            select.append(
+                $('<option>')
+                    .val(name)
+                    .text(name)
+                    .prop('selected', selectedKeys.has(name.toLowerCase())),
+            );
+        }
+
+        for (const name of selectedNames) {
+            if (availableKeys.has(name.toLowerCase())) continue;
+
+            select.append(
+                $('<option>')
+                    .val(name)
+                    .text(`Unavailable: ${name}`)
+                    .prop('selected', true),
+            );
+        }
+    }
+
     function updateCompanionEditorVisibility() {
         const category = editorEl.find('#ica--editor-category').val()?.toString() || '';
         const companionExecution = isEditorCompanionExecution();
@@ -3257,6 +3305,10 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
         executionSelect.prop('disabled', category === 'companion');
         editorEl.find('#ica--companion-section').toggle(companionExecution);
         editorEl.find('#ica--tool-calling-row').toggle(category !== 'tool');
+        const showToolCallingSettings = category !== 'tool' && editorEl.find('#ica--editor-toolCalling-enabled').prop('checked');
+        const toolCallingModeIsSelected = editorEl.find('#ica--editor-toolCalling-mode').val()?.toString() === 'selected';
+        editorEl.find('#ica--tool-calling-mode-row').toggle(showToolCallingSettings);
+        editorEl.find('#ica--tool-calling-selected-row').toggle(showToolCallingSettings && toolCallingModeIsSelected);
         const showChatHistoryOptions = companionExecution && editorEl.find('#ica--editor-companion-includeInChatHistory').prop('checked');
         editorEl.find('#ica--companion-chat-history-row').toggle(showChatHistoryOptions);
         editorEl.find('#ica--editor-companion-chatHistoryDepth').prop('disabled', editorEl.find('#ica--editor-companion-includeAllChatHistory').prop('checked'));
@@ -3368,6 +3420,10 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
         updateCompanionContextRecipientOptions();
         updateCompanionEditorVisibility();
     });
+    editorEl.find('#ica--editor-toolCalling-enabled, #ica--editor-toolCalling-mode').on('change', () => {
+        updateToolCallingSelectionOptions();
+        updateCompanionEditorVisibility();
+    });
     editorEl.find('#ica--editor-chatroom-custom-styles').on('input', updateChatroomCustomStyleOptions);
     editorEl.find('#ica--editor-director-custom-voices').on('input', updateDirectorCustomVoiceOptions);
     editorOrderInput.on('input change', syncCompanionOrderInput);
@@ -3380,6 +3436,7 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
     updateCompanionContextRecipientOptions();
     updateCompanionDependencyOptions();
     updateCompanionOutputTargetOptions();
+    updateToolCallingSelectionOptions();
     updateCompanionEditorVisibility();
     syncCompanionOrderInput();
 
@@ -3788,6 +3845,8 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
     agent.toolCalling = {
         ...(agent.toolCalling ?? {}),
         enabled: editorEl.find('#ica--editor-toolCalling-enabled').prop('checked') === true,
+        mode: editorEl.find('#ica--editor-toolCalling-mode').val()?.toString() === 'selected' ? 'selected' : 'all',
+        selectedTools: normalizeCompanionBatchAgentIds(editorEl.find('#ica--editor-toolCalling-selectedTools').val()),
     };
     agent.prompt = editorEl.find('#ica--editor-prompt').val().toString();
     agent.companion = readCompanionConfigFromEditor(editorEl, agent);

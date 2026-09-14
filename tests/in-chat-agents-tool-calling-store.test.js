@@ -22,10 +22,10 @@ async function importStore() {
 }
 
 describe('in-chat agent tool calling setting', () => {
-    test('new agents default to tool calling off', async () => {
+    test('new agents default to tool calling off with every registered tool selected', async () => {
         const store = await importStore();
 
-        expect(store.createDefaultAgent().toolCalling).toEqual({ enabled: false });
+        expect(store.createDefaultAgent().toolCalling).toEqual({ enabled: false, mode: 'all', selectedTools: [] });
     });
 
     test('agents saved before the setting existed load with tool calling off', async () => {
@@ -40,7 +40,7 @@ describe('in-chat agent tool calling setting', () => {
 
         const normalized = store.normalizeAgent(legacyAgent);
 
-        expect(normalized.toolCalling).toEqual({ enabled: false });
+        expect(normalized.toolCalling).toEqual({ enabled: false, mode: 'all', selectedTools: [] });
         expect(normalized).toMatchObject({
             id: 'legacy-companion',
             name: 'Lookup',
@@ -54,10 +54,10 @@ describe('in-chat agent tool calling setting', () => {
     test('only an explicit boolean true enables tool calling', async () => {
         const store = await importStore();
 
-        expect(store.normalizeAgent({ toolCalling: { enabled: true } }).toolCalling).toEqual({ enabled: true });
-        expect(store.normalizeAgent({ toolCalling: { enabled: 'true' } }).toolCalling).toEqual({ enabled: false });
-        expect(store.normalizeAgent({ toolCalling: [true] }).toolCalling).toEqual({ enabled: false });
-        expect(store.normalizeAgent({ toolCalling: null }).toolCalling).toEqual({ enabled: false });
+        expect(store.normalizeAgent({ toolCalling: { enabled: true } }).toolCalling).toEqual({ enabled: true, mode: 'all', selectedTools: [] });
+        expect(store.normalizeAgent({ toolCalling: { enabled: 'true' } }).toolCalling.enabled).toBe(false);
+        expect(store.normalizeAgent({ toolCalling: [true] }).toolCalling.enabled).toBe(false);
+        expect(store.normalizeAgent({ toolCalling: null }).toolCalling.enabled).toBe(false);
     });
 
     test('an enabled setting survives loading and export', async () => {
@@ -72,7 +72,51 @@ describe('in-chat agent tool calling setting', () => {
         }]);
 
         const exported = store.exportAgent('tool-companion');
-        expect(exported?.toolCalling).toEqual({ enabled: true });
-        expect(store.normalizeAgent(structuredClone(exported)).toolCalling).toEqual({ enabled: true });
+        expect(exported?.toolCalling).toEqual({ enabled: true, mode: 'all', selectedTools: [] });
+        expect(store.normalizeAgent(structuredClone(exported)).toolCalling).toEqual({ enabled: true, mode: 'all', selectedTools: [] });
+    });
+
+    test('only "selected" switches the mode away from the "all tools" default', async () => {
+        const store = await importStore();
+
+        expect(store.normalizeAgent({ toolCalling: { mode: 'selected' } }).toolCalling.mode).toBe('selected');
+        expect(store.normalizeAgent({ toolCalling: { mode: 'bogus' } }).toolCalling.mode).toBe('all');
+        expect(store.normalizeAgent({ toolCalling: { mode: undefined } }).toolCalling.mode).toBe('all');
+    });
+
+    test('an explicit tool selection is trimmed, deduplicated, and order-preserving', async () => {
+        const store = await importStore();
+
+        const normalized = store.normalizeAgent({
+            toolCalling: {
+                mode: 'selected',
+                selectedTools: [' Pathfinder_Search ', 'Pathfinder_Search', 'Compendium_Lookup', '', null],
+            },
+        });
+
+        expect(normalized.toolCalling.selectedTools).toEqual(['Pathfinder_Search', 'Compendium_Lookup']);
+    });
+
+    test('a non-array selectedTools value normalizes to an empty selection', async () => {
+        const store = await importStore();
+
+        expect(store.normalizeAgent({ toolCalling: { mode: 'selected', selectedTools: 'Pathfinder_Search' } }).toolCalling.selectedTools).toEqual([]);
+        expect(store.normalizeAgent({ toolCalling: { mode: 'selected', selectedTools: null } }).toolCalling.selectedTools).toEqual([]);
+    });
+
+    test('an explicit tool selection survives loading and export', async () => {
+        const store = await importStore();
+
+        store.loadAgents([{
+            id: 'scoped-companion',
+            name: 'Scoped Companion',
+            prompt: 'Look things up, but only with the compendium.',
+            category: 'companion',
+            toolCalling: { enabled: true, mode: 'selected', selectedTools: ['Compendium_Lookup'] },
+        }]);
+
+        const exported = store.exportAgent('scoped-companion');
+        expect(exported?.toolCalling).toEqual({ enabled: true, mode: 'selected', selectedTools: ['Compendium_Lookup'] });
+        expect(store.normalizeAgent(structuredClone(exported)).toolCalling).toEqual({ enabled: true, mode: 'selected', selectedTools: ['Compendium_Lookup'] });
     });
 });

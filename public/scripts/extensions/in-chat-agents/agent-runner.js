@@ -49,6 +49,7 @@ import { resetChatBackupSequence } from '../../chat-backup-sequence.js';
 import { isKimiK3Model } from '../../openai-model-capabilities.js';
 import { buildFallbackPromptText, extractProfileResponseText } from './llm-utils.js';
 import {
+    filterAgentToolSelection,
     isAgentToolCallingEnabled,
     resolveAgentToolCallingPlan,
     runAgentToolCallLoop,
@@ -3299,7 +3300,7 @@ async function resolveAgentRequestToolCalling(agent, profileId, modelOverride, o
             } catch (error) {
                 console.warn(`[InChatAgents] Failed to collect registered tools for agent "${agent?.name}".`, error);
             }
-            return toolData.tools ?? [];
+            return filterAgentToolSelection(agent, toolData.tools ?? []);
         },
     });
 }

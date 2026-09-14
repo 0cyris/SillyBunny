@@ -341,14 +341,26 @@ function normalizeCompanionBatchAgentIds(value = []) {
     return ids;
 }
 
-async function getRegisteredToolNames() {
+/**
+ * Collects currently registered tools for the editor's tool picker. The
+ * registration name (e.g. "search") is what gets persisted and matched at
+ * request time, but it's often too generic to tell tools from different
+ * extensions apart, so the picker labels options with ToolManager's display
+ * name (e.g. "Compendium: search") instead.
+ * @returns {Promise<{ name: string, label: string }[]>}
+ */
+async function getRegisteredToolOptions() {
     const toolData = {};
     try {
         await ToolManager.registerFunctionToolsOpenAI(toolData);
     } catch (error) {
         console.warn('[InChatAgents] Failed to collect registered tools for the agent editor.', error);
     }
-    return (toolData.tools ?? []).map(tool => tool?.function?.name).filter(Boolean);
+
+    return (toolData.tools ?? [])
+        .map(tool => tool?.function?.name)
+        .filter(Boolean)
+        .map(name => ({ name, label: ToolManager.getDisplayName(name) || name }));
 }
 
 function getCompanionAgentOptionLabel(agent) {
@@ -2908,7 +2920,7 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
     }
 
     const editorEl = $(html);
-    const registeredToolNames = await getRegisteredToolNames();
+    const registeredToolOptions = await getRegisteredToolOptions();
 
     // Populate fields
     editorEl.find('#ica--editor-name').val(agent.name);
@@ -3257,20 +3269,20 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
         const currentSelection = normalizeCompanionBatchAgentIds(select.val());
         const selectedNames = currentSelection.length ? currentSelection : savedToolCallingSelectedTools;
         const selectedKeys = new Set(selectedNames.map(name => name.toLowerCase()));
-        const availableKeys = new Set(registeredToolNames.map(name => name.toLowerCase()));
+        const availableKeys = new Set(registeredToolOptions.map(option => option.name.toLowerCase()));
 
         select.empty();
-        if (!registeredToolNames.length && !selectedNames.length) {
+        if (!registeredToolOptions.length && !selectedNames.length) {
             select.append($('<option>').val('').text('No registered tools').prop('disabled', true));
             return;
         }
 
-        for (const name of registeredToolNames) {
+        for (const option of registeredToolOptions) {
             select.append(
                 $('<option>')
-                    .val(name)
-                    .text(name)
-                    .prop('selected', selectedKeys.has(name.toLowerCase())),
+                    .val(option.name)
+                    .text(option.label)
+                    .prop('selected', selectedKeys.has(option.name.toLowerCase())),
             );
         }
 

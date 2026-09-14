@@ -108,8 +108,9 @@ describe('agent tool call loop wiring', () => {
     test('the agent editor offers an explicit tool picker populated from the shared tool manager', () => {
         expect(editorHtml).toContain('id="ica--editor-toolCalling-mode"');
         expect(editorHtml).toContain('id="ica--editor-toolCalling-selectedTools"');
-        expect(indexSource).toContain('async function getRegisteredToolNames()');
+        expect(indexSource).toContain('async function getRegisteredToolOptions()');
         expect(indexSource).toContain('ToolManager.registerFunctionToolsOpenAI(toolData)');
+        expect(indexSource).toContain('.map(name => ({ name, label: ToolManager.getDisplayName(name) || name }));');
         expect(indexSource).toContain('function updateToolCallingSelectionOptions()');
         expect(indexSource).toContain('editorEl.find(\'#ica--editor-toolCalling-mode\').val(agent.toolCalling?.mode === \'selected\' ? \'selected\' : \'all\');');
         expect(indexSource).toContain('mode: editorEl.find(\'#ica--editor-toolCalling-mode\').val()?.toString() === \'selected\' ? \'selected\' : \'all\',');

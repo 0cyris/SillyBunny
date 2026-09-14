@@ -219,3 +219,31 @@ export async function runAgentToolCallLoop({
         }
     }
 }
+
+/**
+ * @typedef {object} AgentToolCallHistoryEntry
+ * @property {string} name Display name (falling back to the registration name)
+ * @property {string} [result] Present for a successful invocation
+ * @property {string} [error] Present for a failed invocation
+ */
+
+/**
+ * Reduces a run's tool-calling outcome to entries safe for an agent's
+ * execution history: the tool name and its result or error, one per
+ * invocation. Stealth invocations never reach this list — the loop's
+ * `invocations` array already excludes them, keeping them out of any
+ * history storage exactly as they're kept out of the chat/model transcript.
+ * @param {{ invocations?: import('../../tool-calling.js').ToolInvocation[] } | null | undefined} toolCalling
+ * @returns {AgentToolCallHistoryEntry[]}
+ */
+export function buildAgentToolCallHistoryEntries(toolCalling) {
+    if (!toolCalling || !Array.isArray(toolCalling.invocations)) {
+        return [];
+    }
+
+    return toolCalling.invocations.map(invocation => {
+        const name = invocation?.displayName || invocation?.name || '';
+        const outcome = String(invocation?.result ?? '');
+        return invocation?.error ? { name, error: outcome } : { name, result: outcome };
+    });
+}

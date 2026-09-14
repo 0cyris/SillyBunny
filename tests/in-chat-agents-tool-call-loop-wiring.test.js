@@ -116,4 +116,31 @@ describe('agent tool call loop wiring', () => {
         expect(indexSource).toContain('mode: editorEl.find(\'#ica--editor-toolCalling-mode\').val()?.toString() === \'selected\' ? \'selected\' : \'all\',');
         expect(indexSource).toContain('selectedTools: normalizeCompanionBatchAgentIds(editorEl.find(\'#ica--editor-toolCalling-selectedTools\').val()),');
     });
+
+    test('a tool-calling run\'s invocations reach the prompt-transform and context-intercept execution history', () => {
+        expect(runnerSource).toContain('    buildAgentToolCallHistoryEntries,\n');
+
+        const promptTransformSource = getFunctionSource(runnerSource, 'runPromptTransformAgent');
+        expect(countOccurrences(
+            promptTransformSource,
+            '...(response.toolCalling ? { toolCalls: buildAgentToolCallHistoryEntries(response.toolCalling) } : {}),',
+        )).toBe(2);
+
+        const contextInterceptSource = getFunctionSource(runnerSource, 'runContextInterceptAgent');
+        expect(countOccurrences(
+            contextInterceptSource,
+            '...(response.toolCalling ? { toolCalls: buildAgentToolCallHistoryEntries(response.toolCalling) } : {}),',
+        )).toBe(2);
+
+        const sanitizeSource = getFunctionSource(runnerSource, 'sanitizePreGenerationInterceptRunForStorage');
+        expect(sanitizeSource).toContain('...(Array.isArray(result.toolCalls) ? { toolCalls: result.toolCalls } : {}),');
+    });
+
+    test('a companion run\'s invocations reach its stored result, always overwriting any stale value', () => {
+        expect(companionRunnerSource).toContain('import { buildAgentToolCallHistoryEntries } from \'../agent-tool-call-loop.js\';');
+
+        const source = getFunctionSource(companionRunnerSource, 'runSingleCompanionAgent');
+        expect(source).toContain('toolCalls: buildAgentToolCallHistoryEntries(response.toolCalling),');
+        expect(source).toContain('toolCalls: [],');
+    });
 });

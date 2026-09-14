@@ -55,6 +55,7 @@ import {
     normalizePlotCompassObjective,
     TRACKER_EMPTY_OUTPUT_INSTRUCTION,
 } from './companion-shared.js';
+import { buildAgentToolCallHistoryEntries } from '../agent-tool-call-loop.js';
 import { resolveCompanionContentMacros } from './companion-macros.js';
 import { findTrackerBlocks, inspectTrackerState, normalizeCompanionTrackerRepairPayload, TRACKER_REPAIR_INSTRUCTION } from '../tracker-state.js';
 
@@ -1577,6 +1578,9 @@ async function runSingleCompanionAgent(agent, messageIndex, generationType, canc
             profileId: response.profileId,
             profileLabel: getProfileLabel(agent, response.profileId),
             modelLabel: getModelLabel(agent),
+            // Always set (not spread): a merge-based update would otherwise let a stale
+            // tool-call list from a previous run linger under this run's result.
+            toolCalls: buildAgentToolCallHistoryEntries(response.toolCalling),
         });
     } catch (error) {
         if (!isAgentRuntimeAllowed(agent)) {
@@ -1592,6 +1596,7 @@ async function runSingleCompanionAgent(agent, messageIndex, generationType, canc
                 content: '',
                 error: cancelled ? 'Cancelled.' : (error instanceof Error ? error.message : String(error)),
                 tokenUsage: null,
+                toolCalls: [],
             });
         }
         if (targetChanged) {

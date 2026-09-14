@@ -2,6 +2,7 @@ import { describe, expect, test } from '@jest/globals';
 
 import {
     AGENT_TOOL_CALLING_SKIP_REASONS,
+    buildAgentToolCallHistoryEntries,
     filterAgentToolSelection,
     isAgentToolCallingEnabled,
     resolveAgentToolCallingPlan,
@@ -505,5 +506,76 @@ describe('an agent scoped to one extension\'s tools via explicit selection', () 
             expect(request.tools ?? []).not.toContainEqual(PATHFINDER_ROLL_TOOL);
         }
         expect(result.invocations.some(invoked => invoked.name === 'pathfinder_roll')).toBe(false);
+    });
+});
+
+describe('buildAgentToolCallHistoryEntries', () => {
+    test('returns no entries when tool calling never ran', () => {
+        expect(buildAgentToolCallHistoryEntries(undefined)).toEqual([]);
+        expect(buildAgentToolCallHistoryEntries(null)).toEqual([]);
+        expect(buildAgentToolCallHistoryEntries({ status: 'disabled' })).toEqual([]);
+        expect(buildAgentToolCallHistoryEntries({ status: 'failed', reason: 'boom' })).toEqual([]);
+    });
+
+    test('records a successful invocation with its display name and result', () => {
+        const toolCalling = {
+            status: 'enabled',
+            invocations: [invocation('call_1', 'compendium_search', { query: 'Vex' }, '[{"id":"npc-vex"}]')],
+        };
+
+        expect(buildAgentToolCallHistoryEntries(toolCalling)).toEqual([
+            { name: 'compendium_search', result: '[{"id":"npc-vex"}]' },
+        ]);
+    });
+
+    test('records a failing invocation under "error" instead of "result"', () => {
+        const toolCalling = {
+            status: 'enabled',
+            invocations: [
+                invocation('call_1', 'compendium_read', { id: 'missing' }, 'Error: not found', { error: true }),
+            ],
+        };
+
+        expect(buildAgentToolCallHistoryEntries(toolCalling)).toEqual([
+            { name: 'compendium_read', error: 'Error: not found' },
+        ]);
+    });
+
+    test('falls back to the registration name when there is no display name', () => {
+        const toolCalling = {
+            status: 'enabled',
+            invocations: [{ id: 'call_1', name: 'raw_tool', displayName: '', result: 'ok', error: false }],
+        };
+
+        expect(buildAgentToolCallHistoryEntries(toolCalling)).toEqual([{ name: 'raw_tool', result: 'ok' }]);
+    });
+
+    test('never surfaces stealth calls, which never appear in the invocations list', () => {
+        const toolCalling = {
+            status: 'enabled',
+            invocations: [invocation('call_1', 'compendium_search', { query: 'Vex' }, '[]')],
+            // Stealth calls are reported separately by name only, never mixed into `invocations`.
+            stealthCalls: ['pathfinder_notebook_write'],
+        };
+
+        const entries = buildAgentToolCallHistoryEntries(toolCalling);
+
+        expect(entries).toHaveLength(1);
+        expect(entries.some(entry => entry.name === 'pathfinder_notebook_write')).toBe(false);
+    });
+
+    test('preserves invocation order across multiple tool calls in one run', () => {
+        const toolCalling = {
+            status: 'enabled',
+            invocations: [
+                invocation('call_1', 'compendium_search', { query: 'Vex' }, '[{"id":"npc-vex"}]'),
+                invocation('call_2', 'compendium_read', { id: 'npc-vex' }, 'Error: locked', { error: true }),
+            ],
+        };
+
+        expect(buildAgentToolCallHistoryEntries(toolCalling)).toEqual([
+            { name: 'compendium_search', result: '[{"id":"npc-vex"}]' },
+            { name: 'compendium_read', error: 'Error: locked' },
+        ]);
     });
 });

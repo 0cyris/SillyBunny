@@ -49,6 +49,7 @@ import { resetChatBackupSequence } from '../../chat-backup-sequence.js';
 import { isKimiK3Model } from '../../openai-model-capabilities.js';
 import { buildFallbackPromptText, extractProfileResponseText } from './llm-utils.js';
 import {
+    buildAgentToolCallHistoryEntries,
     filterAgentToolSelection,
     isAgentToolCallingEnabled,
     resolveAgentToolCallingPlan,
@@ -2992,6 +2993,7 @@ function sanitizePreGenerationInterceptRunForStorage(result) {
         role: result.role ?? '',
         timestamp: result.timestamp,
         error: result.error,
+        ...(Array.isArray(result.toolCalls) ? { toolCalls: result.toolCalls } : {}),
     };
 }
 
@@ -3492,6 +3494,7 @@ async function runPromptTransformAgent(agent, message, generationType, messageTe
                 outputText: '',
                 nextMessageText: currentMessageText,
                 beforeText: currentMessageText,
+                ...(response.toolCalling ? { toolCalls: buildAgentToolCallHistoryEntries(response.toolCalling) } : {}),
             };
 
             if (showNotifications) {
@@ -3543,6 +3546,7 @@ async function runPromptTransformAgent(agent, message, generationType, messageTe
             outputText: promptOutputText,
             nextMessageText,
             beforeText: currentMessageText,
+            ...(response.toolCalling ? { toolCalls: buildAgentToolCallHistoryEntries(response.toolCalling) } : {}),
         };
 
         if (showNotifications) {
@@ -4722,6 +4726,7 @@ async function runContextInterceptAgent(agent, currentContextText, generationTyp
                 status: 'empty-response',
                 profileId: response.profileId,
                 runner: response.runner,
+                ...(response.toolCalling ? { toolCalls: buildAgentToolCallHistoryEntries(response.toolCalling) } : {}),
             };
         }
 
@@ -4732,6 +4737,7 @@ async function runContextInterceptAgent(agent, currentContextText, generationTyp
             outputText,
             profileId: response.profileId,
             runner: response.runner,
+            ...(response.toolCalling ? { toolCalls: buildAgentToolCallHistoryEntries(response.toolCalling) } : {}),
         };
     } catch (error) {
         if (agentGenerationCancelRevision !== cancelRevision || generationStopRequested || isAbortSignalTriggered(error)) {

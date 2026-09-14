@@ -318,6 +318,7 @@
                     <select id="ica--editor-pre-applyMode" class="text_pole">
                         <option value="replace">Replace context</option>
                         <option value="wrap">Wrap / append</option>
+                        <option value="wrap-insert-output-only">Wrap / insert output only</option>
                         <option value="patch">Patch via tags</option>
                     </select>
                 </label>
@@ -355,7 +356,21 @@
                     </label>
                 </div>
             </div>
-            <div class="ica--regex-note">Pre-generation timing runs before the main model receives the assembled context. Post-main timing runs after the main model finishes and before the response is shown or saved. Agents run by Order. Replace mode expects a full replacement context in pre-generation timing; for chat completion that must be a JSON array of chat messages. Wrap and patch add a new message on chat-completion APIs using the Role below.</div>
+            <div class="ica--editor-row" id="ica--pre-context-scope-row">
+                <label>Agent's Own Context <small>(how much of the outgoing context this agent's own request sees; the context sent to the main model is unaffected)</small>
+                    <select id="ica--editor-pre-contextScope" class="text_pole">
+                        <option value="full">Full outgoing context</option>
+                        <option value="recent">Only the most recent messages</option>
+                    </select>
+                </label>
+            </div>
+            <div class="ica--editor-row" id="ica--pre-context-recent-row" style="display:none">
+                <label>Recent Message Count
+                    <input type="number" id="ica--editor-pre-contextRecentMessages" class="text_pole" min="1" max="200" value="10" />
+                </label>
+                <div class="ica--regex-note">Text-completion prompts can't be split by message and always use the full context regardless of this setting.</div>
+            </div>
+            <div class="ica--regex-note">Pre-generation timing runs before the main model receives the assembled context. Post-main timing runs after the main model finishes and before the response is shown or saved. Agents run by Order. Replace mode expects a full replacement context in pre-generation timing; for chat completion that must be a JSON array of chat messages. Wrap and patch add a new message on chat-completion APIs using the Role below. Insert output only asks the agent for just the text to insert (e.g. retrieved facts), never a copy of the context; pre-generation timing only.</div>
         </div>
         <div class="ica--regex-note" id="ica--pre-injection-note">Inject mode uses the existing extension prompt path. Position, Depth, Role, and World Info scanning control where the prompt is inserted.</div>
         <div class="ica--editor-row flex-container flexGap5">

@@ -372,6 +372,58 @@ describe('in-chat agent scoped enabled state', () => {
         }));
     });
 
+    test('normalizes insertOutputOnly and contextScope with safe defaults', async () => {
+        const store = await importStore();
+
+        expect(store.createDefaultAgent().preProcess).toEqual(expect.objectContaining({
+            insertOutputOnly: false,
+            contextScope: 'full',
+            contextRecentMessages: store.DEFAULT_CONTEXT_RECENT_MESSAGES,
+        }));
+
+        store.loadAgents([{
+            id: 'agent-scoped-intercept',
+            name: 'Scoped Intercept Agent',
+            preProcess: {
+                mode: 'intercept',
+                applyMode: 'wrap',
+                insertOutputOnly: true,
+                contextScope: 'recent',
+                contextRecentMessages: 25,
+            },
+        }]);
+
+        expect(store.getAgentById('agent-scoped-intercept').preProcess).toEqual(expect.objectContaining({
+            insertOutputOnly: true,
+            contextScope: 'recent',
+            contextRecentMessages: 25,
+        }));
+
+        store.loadAgents([{
+            id: 'agent-invalid-scope',
+            name: 'Invalid Scope Agent',
+            preProcess: {
+                insertOutputOnly: false,
+                contextScope: 'partial',
+                contextRecentMessages: 'a lot',
+            },
+        }]);
+
+        expect(store.getAgentById('agent-invalid-scope').preProcess).toEqual(expect.objectContaining({
+            insertOutputOnly: false,
+            contextScope: 'full',
+            contextRecentMessages: store.DEFAULT_CONTEXT_RECENT_MESSAGES,
+        }));
+
+        store.loadAgents([{
+            id: 'agent-huge-scope',
+            name: 'Huge Scope Agent',
+            preProcess: { contextRecentMessages: 999999 },
+        }]);
+
+        expect(store.getAgentById('agent-huge-scope').preProcess.contextRecentMessages).toBe(store.MAX_CONTEXT_RECENT_MESSAGES);
+    });
+
     test('defaults agents to inline execution with companion settings available', async () => {
         const store = await importStore();
         const agent = store.createDefaultAgent();

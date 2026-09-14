@@ -63,6 +63,9 @@ import {
  * @property {string} patchStartTag
  * @property {string} patchEndTag
  * @property {number} maxTokens
+ * @property {boolean} insertOutputOnly - Wrap mode only: the agent's output is insert-only text (e.g. retrieved facts), never a copy of the context.
+ * @property {'full'|'recent'} contextScope - Insert-style modes only (wrap/patch); replace always sees the full context.
+ * @property {number} contextRecentMessages - Message count used when contextScope is 'recent' and contextFormat is 'chat'.
  */
 
 /**
@@ -551,6 +554,8 @@ export const LEGACY_AGENT_MAX_TOKENS = 2000;
 export const DEFAULT_AGENT_MAX_TOKENS = 8192;
 export const MAX_AGENT_MAX_TOKENS = 64000;
 export const PATHFINDER_TEMPLATE_ID = 'tpl-pathfinder';
+export const DEFAULT_CONTEXT_RECENT_MESSAGES = 10;
+export const MAX_CONTEXT_RECENT_MESSAGES = 200;
 
 export function areAgentsGloballyEnabled() {
     return globalSettings.enabled !== false;
@@ -1230,6 +1235,9 @@ export function createDefaultAgent() {
             patchStartTag: '<context_patch>',
             patchEndTag: '</context_patch>',
             maxTokens: DEFAULT_AGENT_MAX_TOKENS,
+            insertOutputOnly: false,
+            contextScope: 'full',
+            contextRecentMessages: DEFAULT_CONTEXT_RECENT_MESSAGES,
         },
         postProcess: {
             enabled: false,
@@ -1392,6 +1400,14 @@ export function normalizeAgent(rawAgent = {}) {
                 ? rawPreProcess.patchEndTag
                 : defaults.preProcess.patchEndTag,
             maxTokens: normalizePreProcessMaxTokens(rawPreProcess.maxTokens),
+            insertOutputOnly: Boolean(rawPreProcess.insertOutputOnly),
+            contextScope: rawPreProcess.contextScope === 'recent' ? 'recent' : defaults.preProcess.contextScope,
+            contextRecentMessages: clampNumber(
+                rawPreProcess.contextRecentMessages,
+                defaults.preProcess.contextRecentMessages,
+                1,
+                MAX_CONTEXT_RECENT_MESSAGES,
+            ),
         },
         postProcess: {
             ...defaults.postProcess,

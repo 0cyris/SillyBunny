@@ -56,6 +56,13 @@ import {
     runAgentToolCallLoop,
     summarizeAgentToolCallingPlan,
 } from './agent-tool-call-loop.js';
+import {
+    isInsertOutputOnlyIntercept,
+    normalizeInterceptApplyMode,
+    resolveContextInterceptScope,
+    selectContextInterceptInstruction,
+    selectRecentChatMessages,
+} from './context-intercept-config.js';
 import { getConnectionProfileDisplayName, getConnectionProfileModelName } from './profile-utils.js';
 import {
     appendHelperPrefillMessages,
@@ -2444,9 +2451,7 @@ function showPromptTransformRunningToast(agent, mode, profileId = '', options = 
     const kind = ['preIntercept', 'postMainIntercept'].includes(String(options?.kind))
         ? String(options.kind)
         : 'postGen';
-    const applyMode = ['wrap', 'patch'].includes(String(options?.applyMode))
-        ? String(options.applyMode)
-        : 'replace';
+    const applyMode = normalizeInterceptApplyMode(options?.applyMode);
     const skipChanges = Boolean(options?.skipChanges && kind === 'postMainIntercept');
     const cancelHandler = typeof options?.onCancel === 'function'
         ? options.onCancel
@@ -2820,9 +2825,7 @@ function buildPatchTaggedText(text, preProcess = {}) {
 
 function applyContextInterceptText(originalText, interceptText, preProcess = {}) {
     const outputText = unwrapContextInterceptOutput(interceptText);
-    const applyMode = preProcess.applyMode === 'wrap' || preProcess.applyMode === 'patch'
-        ? preProcess.applyMode
-        : 'replace';
+    const applyMode = normalizeInterceptApplyMode(preProcess.applyMode);
 
     if (applyMode === 'wrap') {
         const wrappedText = `${String(preProcess.wrapPrefix ?? '')}${outputText}${String(preProcess.wrapSuffix ?? '')}`;
@@ -2876,12 +2879,12 @@ function buildPromptTransformMessages(agentPrompt, messageText, assistantName, g
     ];
 }
 
-function buildContextInterceptMessages(agentPrompt, contextText, generationType, contextFormat, timing = PRE_GENERATION_INTERCEPT_TIMING) {
+function buildContextInterceptMessages(agentPrompt, contextText, generationType, contextFormat, timing = PRE_GENERATION_INTERCEPT_TIMING, insertOutputOnly = false) {
     if (timing === POST_MAIN_GENERATION_INTERCEPT_TIMING) {
         return [
             {
                 role: 'system',
-                content: `${agentPrompt}\n\nYou are modifying the assistant response after the main model generated it, before it is shown or saved. Return only the final assistant response requested by the instructions above. Do not add commentary, labels, or code fences unless they are part of the response itself. If no changes are needed, return the original response verbatim.`,
+                content: `${agentPrompt}\n\n${selectContextInterceptInstruction({ timing, insertOutputOnly })}`,
             },
             {
                 role: 'user',
@@ -2895,7 +2898,7 @@ function buildContextInterceptMessages(agentPrompt, contextText, generationType,
     return [
         {
             role: 'system',
-            content: `${agentPrompt}\n\nYou are modifying the complete outgoing context before the main model sees it. Return only the revised context content requested by the instructions above. Do not add commentary, labels, or code fences unless they are part of the context itself. If no changes are needed, return the original context content verbatim.`,
+            content: `${agentPrompt}\n\n${selectContextInterceptInstruction({ timing, insertOutputOnly })}`,
         },
         {
             role: 'user',
@@ -2979,10 +2982,12 @@ function sanitizePreGenerationInterceptRunForStorage(result) {
         agentId: result.agentId,
         agentName: result.agentName,
         applyMode: result.applyMode,
+        insertOutputOnly: Boolean(result.insertOutputOnly),
         timing: result.timing === POST_MAIN_GENERATION_INTERCEPT_TIMING
             ? POST_MAIN_GENERATION_INTERCEPT_TIMING
             : PRE_GENERATION_INTERCEPT_TIMING,
         contextFormat: result.contextFormat,
+        contextScope: result.contextScope === 'recent' ? 'recent' : 'full',
         status: result.status,
         changed: Boolean(result.changed),
         beforeText: normalizeContentText(result.beforeText),
@@ -4654,16 +4659,25 @@ async function runContextInterceptAgent(agent, currentContextText, generationTyp
         ? POST_MAIN_GENERATION_INTERCEPT_TIMING
         : PRE_GENERATION_INTERCEPT_TIMING;
     const beforeText = normalizeContentText(currentContextText);
-    const applyMode = ['wrap', 'patch'].includes(String(agent?.preProcess?.applyMode))
-        ? String(agent.preProcess.applyMode)
-        : 'replace';
+    const applyMode = normalizeInterceptApplyMode(agent?.preProcess?.applyMode);
+    const insertOutputOnly = isInsertOutputOnlyIntercept(agent?.preProcess, timing);
+    const contextScope = resolveContextInterceptScope({
+        applyMode,
+        contextScope: agent?.preProcess?.contextScope,
+        contextFormat,
+    });
+    // Scoping only ever trims what the agent's own request sees; the context actually
+    // inserted into and sent to the main model is built from currentContextText, unaffected.
+    const agentContextText = typeof options.promptContextText === 'string' ? options.promptContextText : currentContextText;
     const profileId = resolveAgentConnectionProfile(agent);
     const baseResult = {
         agentId: agent.id,
         agentName: agent.name,
         applyMode,
+        insertOutputOnly,
         timing,
         contextFormat,
+        contextScope,
         changed: false,
         beforeText,
         afterText: beforeText,
@@ -4673,8 +4687,8 @@ async function runContextInterceptAgent(agent, currentContextText, generationTyp
         timestamp: new Date().toISOString(),
     };
     const expandedPrompt = substituteParams(agent.prompt, {
-        original: currentContextText,
-        dynamicMacros: buildPromptDynamicMacros(currentContextText, null, agent, generationType),
+        original: agentContextText,
+        dynamicMacros: buildPromptDynamicMacros(agentContextText, null, agent, generationType),
     }).trim();
 
     const runtimeAllowed = isAgentRuntimeAllowed(agent);
@@ -4686,7 +4700,7 @@ async function runContextInterceptAgent(agent, currentContextText, generationTyp
     }
 
     const helperRequest = appendConfiguredHelperPrefillMessages(
-        buildContextInterceptMessages(expandedPrompt, currentContextText, generationType, contextFormat, timing),
+        buildContextInterceptMessages(expandedPrompt, agentContextText, generationType, contextFormat, timing, insertOutputOnly),
     );
     const cancelRevision = agentGenerationCancelRevision;
     const skipChanges = timing === POST_MAIN_GENERATION_INTERCEPT_TIMING && Boolean(options?.skipChanges);
@@ -4807,7 +4821,7 @@ async function runPreGenerationInterceptorsOnText(initialContextText, generation
             runs.push({
                 agentId: agent.id,
                 agentName: agent.name,
-                applyMode: ['wrap', 'patch'].includes(String(agent?.preProcess?.applyMode)) ? String(agent.preProcess.applyMode) : 'replace',
+                applyMode: normalizeInterceptApplyMode(agent?.preProcess?.applyMode),
                 timing: PRE_GENERATION_INTERCEPT_TIMING,
                 contextFormat,
                 changed: false,
@@ -4873,10 +4887,18 @@ async function runPreGenerationInterceptorsOnChat(initialChatMessages, generatio
         }
 
         const contextText = serializeChatContext(currentChatMessages);
+        const scope = resolveContextInterceptScope({
+            applyMode: agent?.preProcess?.applyMode,
+            contextScope: agent?.preProcess?.contextScope,
+            contextFormat: 'chat',
+        });
+        const promptContextText = scope === 'recent'
+            ? serializeChatContext(selectRecentChatMessages(currentChatMessages, agent?.preProcess?.contextRecentMessages))
+            : contextText;
         let result = null;
 
         try {
-            result = await runContextInterceptAgent(agent, contextText, activationSnapshot.generationType, 'chat');
+            result = await runContextInterceptAgent(agent, contextText, activationSnapshot.generationType, 'chat', { promptContextText });
             if (result.status !== 'changed') {
                 runs.push(result);
                 if (result.status === 'cancelled') {
@@ -4919,7 +4941,7 @@ async function runPreGenerationInterceptorsOnChat(initialChatMessages, generatio
             runs.push({
                 agentId: agent.id,
                 agentName: agent.name,
-                applyMode: ['wrap', 'patch'].includes(String(agent?.preProcess?.applyMode)) ? String(agent.preProcess.applyMode) : 'replace',
+                applyMode: normalizeInterceptApplyMode(agent?.preProcess?.applyMode),
                 timing: PRE_GENERATION_INTERCEPT_TIMING,
                 contextFormat: 'chat',
                 changed: false,
@@ -4999,7 +5021,7 @@ async function runPostMainGenerationInterceptorsOnText(initialOutputText, genera
             runs.push({
                 agentId: agent.id,
                 agentName: agent.name,
-                applyMode: ['wrap', 'patch'].includes(String(agent?.preProcess?.applyMode)) ? String(agent.preProcess.applyMode) : 'replace',
+                applyMode: normalizeInterceptApplyMode(agent?.preProcess?.applyMode),
                 timing: POST_MAIN_GENERATION_INTERCEPT_TIMING,
                 contextFormat: 'text',
                 changed: false,

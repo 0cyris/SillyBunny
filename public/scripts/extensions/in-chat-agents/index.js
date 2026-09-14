@@ -7,6 +7,7 @@ import { activateSendButtons, CLIENT_VERSION, chat, deactivateSendButtons, getCu
 import { eventSource, event_types } from '../../events.js';
 import { is_group_generating } from '../../group-chats.js';
 import { ToolManager } from '../../tool-calling.js';
+import { normalizeInterceptApplyMode } from './context-intercept-config.js';
 import {
     areAgentsGloballyEnabled,
     getAgents,
@@ -23,6 +24,7 @@ import {
     AGENT_CATEGORIES,
     AGENT_SUBCATEGORIES,
     DEFAULT_AGENT_MAX_TOKENS,
+    DEFAULT_CONTEXT_RECENT_MESSAGES,
     MAX_AGENT_MAX_TOKENS,
     getGlobalSettings,
     initializeScopedAgentEnableState,
@@ -3002,13 +3004,17 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
     const preProcess = getAgentPreProcess(agent);
     editorEl.find('#ica--editor-pre-mode').val(preProcess.mode);
     editorEl.find('#ica--editor-pre-interceptTiming').val(preProcess.interceptTiming);
-    editorEl.find('#ica--editor-pre-applyMode').val(preProcess.applyMode);
+    editorEl.find('#ica--editor-pre-applyMode').val(
+        preProcess.applyMode === 'wrap' && preProcess.insertOutputOnly === true ? 'wrap-insert-output-only' : preProcess.applyMode,
+    );
     editorEl.find('#ica--editor-pre-wrapPosition').val(preProcess.wrapPosition);
     editorEl.find('#ica--editor-pre-wrapPrefix').val(preProcess.wrapPrefix);
     editorEl.find('#ica--editor-pre-wrapSuffix').val(preProcess.wrapSuffix);
     editorEl.find('#ica--editor-pre-patchStartTag').val(preProcess.patchStartTag);
     editorEl.find('#ica--editor-pre-patchEndTag').val(preProcess.patchEndTag);
     editorEl.find('#ica--editor-pre-maxTokens').val(preProcess.maxTokens ?? DEFAULT_AGENT_MAX_TOKENS);
+    editorEl.find('#ica--editor-pre-contextScope').val(preProcess.contextScope === 'recent' ? 'recent' : 'full');
+    editorEl.find('#ica--editor-pre-contextRecentMessages').val(preProcess.contextRecentMessages ?? DEFAULT_CONTEXT_RECENT_MESSAGES);
 
     // Post-process
     const postProcessType = agent.postProcess.type === 'append' ? 'append' : 'extract';
@@ -3465,16 +3471,25 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
         const phase = editorEl.find('#ica--editor-phase').val();
         const preGenerationVisible = phase === 'pre' || phase === 'both';
         const preMode = editorEl.find('#ica--editor-pre-mode').val()?.toString() || 'inject';
-        const applyMode = editorEl.find('#ica--editor-pre-applyMode').val()?.toString() || 'replace';
+        const rawApplyMode = editorEl.find('#ica--editor-pre-applyMode').val()?.toString() || 'replace';
+        const isWrapApplyMode = rawApplyMode === 'wrap' || rawApplyMode === 'wrap-insert-output-only';
+        const applyMode = isWrapApplyMode ? 'wrap' : normalizeInterceptApplyMode(rawApplyMode);
         const interceptVisible = preGenerationVisible && preMode === 'intercept';
+        const contextScope = editorEl.find('#ica--editor-pre-contextScope').val()?.toString() === 'recent' ? 'recent' : 'full';
 
         editorEl.find('#ica--pre-intercept-options').toggle(interceptVisible);
         editorEl.find('#ica--pre-injection-note').toggle(preGenerationVisible && preMode !== 'intercept');
-        editorEl.find('#ica--pre-wrap-position-row').toggle(interceptVisible && (applyMode === 'wrap' || applyMode === 'patch'));
-        editorEl.find('#ica--pre-wrap-options').toggle(interceptVisible && applyMode === 'wrap');
+        editorEl.find('#ica--pre-wrap-position-row').toggle(interceptVisible && (isWrapApplyMode || applyMode === 'patch'));
+        editorEl.find('#ica--pre-wrap-options').toggle(interceptVisible && isWrapApplyMode);
         editorEl.find('#ica--pre-patch-options').toggle(interceptVisible && applyMode === 'patch');
+        // Replace always uses the full context (a trimmed input would silently drop everything
+        // outside the scope once it replaces the outgoing context), so the scope control only
+        // applies to insert-style modes.
+        const scopeControlVisible = interceptVisible && applyMode !== 'replace';
+        editorEl.find('#ica--pre-context-scope-row').toggle(scopeControlVisible);
+        editorEl.find('#ica--pre-context-recent-row').toggle(scopeControlVisible && contextScope === 'recent');
     }
-    editorEl.find('#ica--editor-pre-mode, #ica--editor-pre-applyMode').on('change', updatePreProcessVisibility);
+    editorEl.find('#ica--editor-pre-mode, #ica--editor-pre-applyMode, #ica--editor-pre-contextScope').on('change', updatePreProcessVisibility);
     updatePhaseVisibility();
 
     // Show/hide post-process options
@@ -3888,21 +3903,24 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
     agent.injection.role = Number(editorEl.find('#ica--editor-role').val());
     agent.injection.order = Number(editorEl.find('#ica--editor-order').val());
     agent.injection.scan = editorEl.find('#ica--editor-scan').prop('checked');
+    const rawEditorApplyMode = editorEl.find('#ica--editor-pre-applyMode').val()?.toString();
+    const editorInsertOutputOnly = rawEditorApplyMode === 'wrap-insert-output-only';
     agent.preProcess = {
         ...getAgentPreProcess(agent),
         mode: editorEl.find('#ica--editor-pre-mode').val()?.toString() === 'intercept' ? 'intercept' : 'inject',
         interceptTiming: editorEl.find('#ica--editor-pre-interceptTiming').val()?.toString() === 'post-main-generation'
             ? 'post-main-generation'
             : 'pre-generation',
-        applyMode: ['replace', 'wrap', 'patch'].includes(editorEl.find('#ica--editor-pre-applyMode').val()?.toString())
-            ? editorEl.find('#ica--editor-pre-applyMode').val().toString()
-            : 'replace',
+        applyMode: editorInsertOutputOnly ? 'wrap' : normalizeInterceptApplyMode(rawEditorApplyMode),
+        insertOutputOnly: editorInsertOutputOnly,
         wrapPosition: editorEl.find('#ica--editor-pre-wrapPosition').val()?.toString() === 'before' ? 'before' : 'after',
         wrapPrefix: editorEl.find('#ica--editor-pre-wrapPrefix').val()?.toString() ?? '',
         wrapSuffix: editorEl.find('#ica--editor-pre-wrapSuffix').val()?.toString() ?? '',
         patchStartTag: editorEl.find('#ica--editor-pre-patchStartTag').val()?.toString() || DEFAULT_PRE_PROCESS.patchStartTag,
         patchEndTag: editorEl.find('#ica--editor-pre-patchEndTag').val()?.toString() || DEFAULT_PRE_PROCESS.patchEndTag,
         maxTokens: Number(editorEl.find('#ica--editor-pre-maxTokens').val()) || DEFAULT_AGENT_MAX_TOKENS,
+        contextScope: editorEl.find('#ica--editor-pre-contextScope').val()?.toString() === 'recent' ? 'recent' : 'full',
+        contextRecentMessages: Number(editorEl.find('#ica--editor-pre-contextRecentMessages').val()) || DEFAULT_CONTEXT_RECENT_MESSAGES,
     };
 
     if (isCompanionAgent(agent) && !agent.prompt.trim()) {
@@ -4869,7 +4887,7 @@ function getPreGenerationInterceptModeLabel(entry) {
     const mode = String(entry?.applyMode ?? 'replace');
     const timing = entry?.timing === 'post-main-generation' ? 'post-main' : 'pre-gen';
     if (mode === 'wrap') {
-        return `${timing} wrap`;
+        return entry?.insertOutputOnly === true ? `${timing} insert-output-only` : `${timing} wrap`;
     }
     if (mode === 'patch') {
         return `${timing} patch`;

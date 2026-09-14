@@ -1257,6 +1257,7 @@ export function createDefaultAgent() {
             runOnCompanionOutputs: false,
             companionOutputTargetAgentIds: [],
         },
+        toolCalling: normalizeAgentToolCallingConfig(),
         tools: [],
         settings: {},
     };
@@ -1278,6 +1279,20 @@ export function normalizeToolDef(raw = {}) {
         shouldRegister: typeof raw.shouldRegister === 'boolean' ? raw.shouldRegister : true,
         stealth: typeof raw.stealth === 'boolean' ? raw.stealth : false,
         enabled: typeof raw.enabled === 'boolean' ? raw.enabled : true,
+    };
+}
+
+/**
+ * Normalizes an agent's own-request tool-calling settings. Agents saved before
+ * the setting existed load with tool calling off.
+ * @param {unknown} [raw]
+ * @returns {{ enabled: boolean }}
+ */
+export function normalizeAgentToolCallingConfig(raw = {}) {
+    const config = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    return {
+        // @ts-ignore
+        enabled: config.enabled === true,
     };
 }
 
@@ -1400,6 +1415,7 @@ export function normalizeAgent(rawAgent = {}) {
                 ? conditions.companionOutputTargetAgentIds.map(id => String(id ?? '').trim()).filter(Boolean)
                 : defaults.conditions.companionOutputTargetAgentIds,
         },
+        toolCalling: normalizeAgentToolCallingConfig(rawAgent.toolCalling),
         tools: Array.isArray(rawAgent.tools)
             ? rawAgent.tools.map(tool => normalizeToolDef(tool))
             : defaults.tools,

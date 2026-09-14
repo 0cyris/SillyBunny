@@ -1702,7 +1702,7 @@ async function runBatchCompanionAgents(agents, messageIndex, generationType, can
         const extraContextSections = getUnitExtraContextSections(agents, extraContextSectionsByAgentId);
         const { promptMessages, taskPayloads } = await buildBatchPromptPayload(agents, messageIndex, generationType, { extraContextSections });
         const maxTokens = Math.min(MAX_AGENT_MAX_TOKENS, agents.reduce((sum, agent) => sum + getCompanionConfig(agent).maxTokens, 0));
-        const response = await requestPromptTransform(agents[0], promptMessages, maxTokens, { runtimeAgents: agents });
+        const response = await requestPromptTransform(agents[0], promptMessages, maxTokens, { runtimeAgents: agents, batched: agents.length > 1 });
 
         if (getAgentGenerationCancelRevision() !== cancelRevision) {
             await cancelCompanionAgentResults(message, agents, messageIndex, response.profileId);

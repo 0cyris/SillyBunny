@@ -1294,6 +1294,7 @@ function buildUpdatedAgentFromTemplate(agent, template) {
     updatedAgent.favorite = Boolean(agent.favorite);
     updatedAgent.connectionProfile = typeof agent.connectionProfile === 'string' ? agent.connectionProfile : '';
     updatedAgent.modelOverride = typeof agent.modelOverride === 'string' ? agent.modelOverride : '';
+    updatedAgent.toolCalling = structuredClone(agent.toolCalling ?? updatedAgent.toolCalling);
     updatedAgent.injection = {
         ...updatedAgent.injection,
         order: getAgentOrderValue(agent),
@@ -2910,6 +2911,7 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
         selectedValue: agent.connectionProfile || '',
     });
     editorEl.find('#ica--editor-modelOverride').val(agent.modelOverride || '');
+    editorEl.find('#ica--editor-toolCalling-enabled').prop('checked', agent.toolCalling?.enabled === true);
 
     const companion = getCompanionConfig(agent);
     editorEl.find('#ica--editor-companion-trigger').val(companion.trigger);
@@ -3254,6 +3256,7 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
 
         executionSelect.prop('disabled', category === 'companion');
         editorEl.find('#ica--companion-section').toggle(companionExecution);
+        editorEl.find('#ica--tool-calling-row').toggle(category !== 'tool');
         const showChatHistoryOptions = companionExecution && editorEl.find('#ica--editor-companion-includeInChatHistory').prop('checked');
         editorEl.find('#ica--companion-chat-history-row').toggle(showChatHistoryOptions);
         editorEl.find('#ica--editor-companion-chatHistoryDepth').prop('disabled', editorEl.find('#ica--editor-companion-includeAllChatHistory').prop('checked'));
@@ -3782,6 +3785,10 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
     agent.favorite = editorEl.find('#ica--editor-favorite').prop('checked');
     agent.connectionProfile = editorEl.find('#ica--editor-connectionProfile').val()?.toString() || '';
     agent.modelOverride = editorEl.find('#ica--editor-modelOverride').val()?.toString().trim() || '';
+    agent.toolCalling = {
+        ...(agent.toolCalling ?? {}),
+        enabled: editorEl.find('#ica--editor-toolCalling-enabled').prop('checked') === true,
+    };
     agent.prompt = editorEl.find('#ica--editor-prompt').val().toString();
     agent.companion = readCompanionConfigFromEditor(editorEl, agent);
     agent.settings = agent.settings && typeof agent.settings === 'object' && !Array.isArray(agent.settings)

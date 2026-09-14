@@ -48,6 +48,12 @@ import { regexFromString, uuidv4 } from '../../utils.js';
 import { resetChatBackupSequence } from '../../chat-backup-sequence.js';
 import { isKimiK3Model } from '../../openai-model-capabilities.js';
 import { buildFallbackPromptText, extractProfileResponseText } from './llm-utils.js';
+import {
+    isAgentToolCallingEnabled,
+    resolveAgentToolCallingPlan,
+    runAgentToolCallLoop,
+    summarizeAgentToolCallingPlan,
+} from './agent-tool-call-loop.js';
 import { getConnectionProfileDisplayName, getConnectionProfileModelName } from './profile-utils.js';
 import {
     appendHelperPrefillMessages,
@@ -3126,7 +3132,7 @@ async function requestMainChatCompletionPromptTransform(context, promptMessages,
     };
 }
 
-async function requestProfilePromptTransform(isRuntimeAllowed, CMRS, profileId, promptMessages, maxTokens, modelOverride = '', signal = null) {
+async function requestProfilePromptTransform(isRuntimeAllowed, CMRS, profileId, promptMessages, maxTokens, modelOverride = '', signal = null, tools = []) {
     const requestOptions = {
         extractData: true,
         includePreset: true,
@@ -3139,6 +3145,49 @@ async function requestProfilePromptTransform(isRuntimeAllowed, CMRS, profileId, 
         requestOptions.modelOverride = modelOverride.trim();
     }
 
+    let toolCalling = null;
+    if (tools.length > 0) {
+        try {
+            // Raw responses are required: extracted data drops the tool calls.
+            const loopResult = await runAgentToolCallLoop({
+                messages: promptMessages,
+                tools,
+                recurseLimit: ToolManager.RECURSE_LIMIT,
+                send: (request) => {
+                    if (!isRuntimeAllowed()) throw new DOMException('', 'AbortError');
+                    const toolPayload = request.tools ? { tools: request.tools, tool_choice: request.tool_choice } : {};
+                    return CMRS.sendRequest(profileId, request.messages, maxTokens, { ...requestOptions, extractData: false }, toolPayload);
+                },
+                hasToolCalls: response => ToolManager.hasToolCalls(response),
+                invokeTools: response => ToolManager.invokeFunctionTools(response, { signal, isCurrent: isRuntimeAllowed }),
+                getText: extractProfileResponseText,
+            });
+            toolCalling = {
+                status: 'enabled',
+                invocations: loopResult.invocations,
+                errors: loopResult.errors.map(error => String(error?.message ?? error)),
+                stealthCalls: loopResult.stealthCalls,
+                requestCount: loopResult.requestCount,
+                stopReason: loopResult.stopReason,
+            };
+            if (loopResult.text.trim()) {
+                return {
+                    output: loopResult.text,
+                    runner: 'profile',
+                    profileId,
+                    toolCalling,
+                };
+            }
+        } catch (error) {
+            if (isAbortSignalTriggered(error, signal) || !isRuntimeAllowed()) {
+                throw error;
+            }
+
+            console.warn(`[InChatAgents] Tool-calling request via ${describePromptTransformTarget(profileId, 'profile')} failed, retrying without tools.`, error);
+            toolCalling = { status: 'failed', reason: String(error?.message ?? error) };
+        }
+    }
+
     try {
         const primaryResponse = await CMRS.sendRequest(profileId, promptMessages, maxTokens, requestOptions);
         const primaryOutput = extractProfileResponseText(primaryResponse);
@@ -3147,6 +3196,7 @@ async function requestProfilePromptTransform(isRuntimeAllowed, CMRS, profileId, 
                 output: primaryOutput,
                 runner: 'profile',
                 profileId,
+                ...(toolCalling ? { toolCalling } : {}),
             };
         }
     } catch (error) {
@@ -3191,6 +3241,7 @@ async function requestProfilePromptTransform(isRuntimeAllowed, CMRS, profileId, 
         output: extractProfileResponseText(fallbackResponse),
         runner: 'profile',
         profileId,
+        ...(toolCalling ? { toolCalling } : {}),
     };
 }
 
@@ -3215,6 +3266,44 @@ export async function runAsInternalPromptTransform(requestFn, signal = null) {
     }
 }
 
+const DISABLED_AGENT_TOOL_CALLING_PLAN = Object.freeze({ status: 'disabled', tools: [] });
+
+async function resolveAgentRequestToolCalling(agent, profileId, modelOverride, options, context) {
+    let profile = null;
+    if (profileId) {
+        try {
+            profile = context?.ConnectionManagerRequestService?.getProfile?.(profileId) ?? null;
+        } catch {
+            profile = null;
+        }
+    }
+
+    return resolveAgentToolCallingPlan({
+        agent,
+        batched: Boolean(options.batched),
+        profile,
+        apiMap: profile ? context?.CONNECT_API_MAP?.[profile.api] ?? null : null,
+        mainApi: context?.mainApi,
+        isSupported: (supportedProfile, apiMap) => Boolean(context?.isToolCallingSupported?.({
+            ...context.chatCompletionSettings,
+            chat_completion_source: apiMap.source,
+            // The agent's own opt-in replaces the main preset's toggle, which would also attach tools to main generation.
+            function_calling: true,
+            // Profiles store the slash command's 'none' alias for no post-processing.
+            custom_prompt_post_processing: ['none', undefined].includes(supportedProfile['prompt-post-processing']) ? '' : supportedProfile['prompt-post-processing'],
+        }, modelOverride || supportedProfile.model)),
+        getTools: async () => {
+            const toolData = {};
+            try {
+                await ToolManager.registerFunctionToolsOpenAI(toolData);
+            } catch (error) {
+                console.warn(`[InChatAgents] Failed to collect registered tools for agent "${agent?.name}".`, error);
+            }
+            return toolData.tools ?? [];
+        },
+    });
+}
+
 export async function requestPromptTransform(agent, promptMessages, maxTokens, options = {}) {
     const isRuntimeAllowed = () => isAgentRuntimeAllowed(agent) && (options.runtimeAgents ?? []).every(isAgentRuntimeAllowed);
     if (!isRuntimeAllowed()) {
@@ -3224,6 +3313,13 @@ export async function requestPromptTransform(agent, promptMessages, maxTokens, o
     const modelOverride = typeof agent.modelOverride === 'string' ? agent.modelOverride.trim() : '';
     const context = getContext();
     const CMRS = context?.ConnectionManagerRequestService;
+    // Agents that never opted in must not gain an extra await before their request starts.
+    const toolCallingPlan = isAgentToolCallingEnabled(agent)
+        ? await resolveAgentRequestToolCalling(agent, profileId, modelOverride, options, context)
+        : DISABLED_AGENT_TOOL_CALLING_PLAN;
+    const withToolCalling = response => (toolCallingPlan.status === 'disabled' || response?.toolCalling
+        ? response
+        : { ...response, toolCalling: summarizeAgentToolCallingPlan(toolCallingPlan) });
     const requestAbortController = new AbortController();
     const runAllowedRequest = requestFn => runAsInternalPromptTransform(() => {
         if (!isRuntimeAllowed()) throw new DOMException('', 'AbortError');
@@ -3237,15 +3333,15 @@ export async function requestPromptTransform(agent, promptMessages, maxTokens, o
                 throw new Error(`${describePromptTransformTarget(profileId, 'profile')} is set, but Connection Manager is unavailable.`);
             }
 
-            return await runAllowedRequest(
-                () => requestProfilePromptTransform(isRuntimeAllowed, CMRS, profileId, promptMessages, maxTokens, modelOverride, requestAbortController.signal),
-            );
+            return withToolCalling(await runAllowedRequest(
+                () => requestProfilePromptTransform(isRuntimeAllowed, CMRS, profileId, promptMessages, maxTokens, modelOverride, requestAbortController.signal, toolCallingPlan.tools),
+            ));
         }
 
         if (canUseMainChatCompletionHelper(context)) {
-            return await runAllowedRequest(
+            return withToolCalling(await runAllowedRequest(
                 () => requestMainChatCompletionPromptTransform(context, promptMessages, maxTokens, options, requestAbortController.signal),
-            );
+            ));
         }
 
         const quietPrompt = promptMessages
@@ -3260,7 +3356,7 @@ export async function requestPromptTransform(agent, promptMessages, maxTokens, o
         }
 
         try {
-            return await runAllowedRequest(async () => ({
+            return withToolCalling(await runAllowedRequest(async () => ({
                 output: await generateQuietPrompt({
                     quietPrompt,
                     quietName: 'In-Chat Agent',
@@ -3271,7 +3367,7 @@ export async function requestPromptTransform(agent, promptMessages, maxTokens, o
                 }),
                 runner: 'main',
                 profileId: '',
-            }));
+            })));
         } finally {
             if (!requestAbortController.signal.aborted && origin.chatId === getCurrentSnapshotChatId()
                 && origin.runId === postProcessingGenerationRunId && origin.cancelRevision === agentGenerationCancelRevision) {

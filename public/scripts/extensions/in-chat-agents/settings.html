@@ -179,6 +179,11 @@
                 <textarea id="ica--helperPrefillMessages" class="text_pole ica--helper-prefill-field" rows="4" placeholder="[assistant] Start of helper response&#10;&#10;[system] Extra instruction"></textarea>
                 <small class="ica--profile-help">Use [system], [user], or [assistant] blocks. Text before any header is treated as [assistant].</small>
             </label>
+            <label class="ica--profile-label">
+                <span>Tools Hidden From Main Generation</span>
+                <select id="ica--hiddenMainGenerationToolNames" class="text_pole" multiple size="5"></select>
+                <small class="ica--profile-help">Selected tools stay available to tool-calling agents but are removed from the main model's own request, keeping their schemas out of its context. Some tool providers only register a tool while the main preset's function calling is on, even if it ends up hidden here.</small>
+            </label>
             <label class="checkbox_label" title="Keep enabled In-Chat Agents separate between Individual chats and Group chats.">
                 <input type="checkbox" id="ica--separateRecentChats" />
                 <span>Separate Agents Between Individual and Group Chats</span>

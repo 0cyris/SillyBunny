@@ -27,6 +27,8 @@ import {
     DEFAULT_CONTEXT_RECENT_MESSAGES,
     MAX_AGENT_MAX_TOKENS,
     getGlobalSettings,
+    getHiddenMainGenerationToolNames,
+    setHiddenMainGenerationToolNames,
     initializeScopedAgentEnableState,
     isAgentEnabledForCurrentScope,
     LEGACY_AGENT_MAX_TOKENS,
@@ -5447,6 +5449,43 @@ function populateGlobalHelperPrefillField() {
     $('#ica--helperPrefillMessages').val(getGlobalSettings().helperPrefillMessages || '');
 }
 
+async function populateHiddenMainGenerationToolNamesSelect() {
+    const select = $('#ica--hiddenMainGenerationToolNames');
+    if (!select.length) {
+        return;
+    }
+
+    const registeredToolOptions = await getRegisteredToolOptions();
+    const hiddenNames = getHiddenMainGenerationToolNames();
+    const availableKeys = new Set(registeredToolOptions.map(option => option.name));
+
+    select.empty();
+    if (!registeredToolOptions.length && hiddenNames.size === 0) {
+        select.append($('<option>').val('').text('No registered tools').prop('disabled', true));
+        return;
+    }
+
+    for (const option of registeredToolOptions) {
+        select.append(
+            $('<option>')
+                .val(option.name)
+                .text(option.label)
+                .prop('selected', hiddenNames.has(option.name)),
+        );
+    }
+
+    for (const name of hiddenNames) {
+        if (availableKeys.has(name)) continue;
+
+        select.append(
+            $('<option>')
+                .val(name)
+                .text(`Unavailable: ${name}`)
+                .prop('selected', true),
+        );
+    }
+}
+
 /**
  * Makes an LLM call for prompt refinement, using CMRS if a profile is selected.
  * @param {string} systemPrompt
@@ -6110,6 +6149,7 @@ async function refinePromptWithAI(currentPrompt, category, phase, connectionProf
     populateGlobalNotificationToggle();
     populateGlobalExecutionModeDropdown();
     populateGlobalHelperPrefillField();
+    populateHiddenMainGenerationToolNamesSelect();
     $('#ica--connectionProfile').on('change', function () {
         setGlobalSettings({ connectionProfile: this.value });
         persistExtensionState();
@@ -6185,6 +6225,9 @@ async function refinePromptWithAI(currentPrompt, category, phase, connectionProf
     $('#ica--helperPrefillMessages').on('input', function () {
         setGlobalSettings({ helperPrefillMessages: this.value });
         persistExtensionState();
+    });
+    $('#ica--hiddenMainGenerationToolNames').on('change', function () {
+        setHiddenMainGenerationToolNames($(this).val() ?? []);
     });
     $('#ica--resetDefaults').on('click', async () => {
         const agents = getVisibleInChatAgents();

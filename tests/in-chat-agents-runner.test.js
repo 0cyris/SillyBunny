@@ -426,6 +426,7 @@ describe('in-chat agent post-processing runner', () => {
             getEnabledToolAgents: jest.fn(() => [...enabledToolAgents]),
             getGlobalSettings: jest.fn(() => globalSettings),
             getHiddenAgentIds: jest.fn(() => new Set(globalSettings.hiddenCompanionAgentIds ?? [])),
+            getHiddenMainGenerationToolNames: jest.fn(() => new Set(globalSettings.hiddenMainGenerationToolNames ?? [])),
             getPromptTransformMode: jest.fn(agent => agent?.postProcess?.promptTransformMode === 'append' ? 'append' : 'rewrite'),
             isAgentHidden: jest.fn(agentId => new Set(globalSettings.hiddenCompanionAgentIds ?? []).has(String(agentId ?? '').trim())),
             isAgentRuntimeAllowed: jest.fn(() => true),

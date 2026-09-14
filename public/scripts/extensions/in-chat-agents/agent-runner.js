@@ -32,6 +32,7 @@ import {
     getEnabledAgents,
     getEnabledToolAgents,
     getGlobalSettings,
+    getHiddenMainGenerationToolNames,
     getPromptTransformMode,
     isAgentRuntimeAllowed,
     isCompanionAgent,
@@ -63,6 +64,7 @@ import {
     selectContextInterceptInstruction,
     selectRecentChatMessages,
 } from './context-intercept-config.js';
+import { excludeHiddenToolsFromMainGeneration } from './main-generation-tool-filter.js';
 import { getConnectionProfileDisplayName, getConnectionProfileModelName } from './profile-utils.js';
 import {
     appendHelperPrefillMessages,
@@ -5279,7 +5281,9 @@ function onMessageSwipeDeleted(data) {
  * @param {object} data Generation data being prepared for the API call
  */
 function onChatCompletionSettingsReady(data) {
-    if (internalPromptTransformDepth > 0 || !areAgentsGloballyEnabled() || agentRegisteredToolNames.size === 0) {
+    const hiddenToolNames = getHiddenMainGenerationToolNames();
+    if (internalPromptTransformDepth > 0 || !areAgentsGloballyEnabled()
+        || (agentRegisteredToolNames.size === 0 && hiddenToolNames.size === 0)) {
         return;
     }
 
@@ -5290,10 +5294,20 @@ function onChatCompletionSettingsReady(data) {
         return;
     }
 
+    // Tools hidden from main generation stay registered for tool-calling agents:
+    // agent requests collect their own tools independently and never reach this handler.
+    if (hiddenToolNames.size > 0 && Array.isArray(data.tools)) {
+        data.tools = excludeHiddenToolsFromMainGeneration(data.tools, hiddenToolNames);
+        if (data.tools.length === 0) {
+            delete data.tools;
+            delete data.tool_choice;
+        }
+    }
+
     // "Require tool use on every response": force only the first pass of a
     // turn. Forcing recursive passes too would make every turn consume the
     // whole recursion budget before the model may write its reply.
-    if (toolRecursionDepth === 0 && getPathfinderRuntimeAgent()) {
+    if (toolRecursionDepth === 0 && data.tools && getPathfinderRuntimeAgent()) {
         const forcedToolChoice = getForcedToolChoice(data.chat_completion_source, data.model);
         if (forcedToolChoice) {
             data.tool_choice = forcedToolChoice;

@@ -182,6 +182,7 @@ let globalSettings = {
     companionConcurrentWithPostGen: false,
     helperPrefillMessages: '',
     hiddenCompanionAgentIds: [],
+    hiddenMainGenerationToolNames: [],
 };
 
 /**
@@ -209,6 +210,7 @@ export function setGlobalSettings(update) {
         ? globalSettings.helperPrefillMessages
         : '';
     globalSettings.hiddenCompanionAgentIds = normalizeAgentIdCollection(globalSettings.hiddenCompanionAgentIds);
+    globalSettings.hiddenMainGenerationToolNames = normalizeAgentIdCollection(globalSettings.hiddenMainGenerationToolNames);
 
     if (!globalSettings.scopedEnabledAgentIdsInitialized) {
         const scopedSetting = update.enabledAgentIdsByChatType;
@@ -250,6 +252,26 @@ export function setHiddenAgentIds(ids) {
     const next = JSON.stringify(nextHiddenIds);
 
     globalSettings.hiddenCompanionAgentIds = nextHiddenIds;
+    if (previous !== next) {
+        persistAgentGlobalSettings();
+    }
+}
+
+/**
+ * Tool names hidden from main generation's own request; tool-calling agents
+ * are unaffected since they collect their own tools independently.
+ * @returns {Set<string>}
+ */
+export function getHiddenMainGenerationToolNames() {
+    return new Set(globalSettings.hiddenMainGenerationToolNames);
+}
+
+export function setHiddenMainGenerationToolNames(names) {
+    const nextHiddenNames = normalizeAgentIdCollection(names);
+    const previous = JSON.stringify(globalSettings.hiddenMainGenerationToolNames);
+    const next = JSON.stringify(nextHiddenNames);
+
+    globalSettings.hiddenMainGenerationToolNames = nextHiddenNames;
     if (previous !== next) {
         persistAgentGlobalSettings();
     }

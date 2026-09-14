@@ -120,6 +120,8 @@ beforeAll(async () => {
         exportAllAgents: jest.fn(() => []),
         exportAgent: jest.fn(() => null),
         getGlobalSettings: jest.fn(() => ({})),
+        getHiddenMainGenerationToolNames: jest.fn(() => new Set()),
+        setHiddenMainGenerationToolNames: jest.fn(),
         initializeScopedAgentEnableState: jest.fn(() => false),
         isAgentEnabledForCurrentScope: jest.fn(() => false),
         normalizeAgentCategory: jest.fn(value => value),

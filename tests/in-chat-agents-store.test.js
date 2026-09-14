@@ -145,6 +145,24 @@ describe('in-chat agent scoped enabled state', () => {
         expect(saveSettingsDebounced).toHaveBeenCalledTimes(1);
     });
 
+    test('stores tool names hidden from main generation in global settings', async () => {
+        const store = await importStore();
+
+        expect([...store.getHiddenMainGenerationToolNames()]).toEqual([]);
+
+        store.setGlobalSettings({
+            hiddenMainGenerationToolNames: ['search', '', ' read ', 'search'],
+        });
+
+        expect(store.getGlobalSettings().hiddenMainGenerationToolNames).toEqual(['read', 'search']);
+        expect([...store.getHiddenMainGenerationToolNames()]).toEqual(['read', 'search']);
+
+        store.setHiddenMainGenerationToolNames(['write']);
+
+        expect(store.getGlobalSettings().hiddenMainGenerationToolNames).toEqual(['write']);
+        expect(saveSettingsDebounced).toHaveBeenCalledTimes(1);
+    });
+
     test('resolves compact regex snapshots from runtime cache', async () => {
         const store = await importStore();
         const snapshotStore = await import('../public/scripts/extensions/in-chat-agents/regex-snapshot-store.js');

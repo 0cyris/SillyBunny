@@ -3879,10 +3879,10 @@ export async function init() {
 
         macros.register('availableExpressions', {
             handler: function () {
-                return getAvailableExpressionsList().join(', ');
+                return getCachedExpressions().join(', ');
             },
             category: macros.category.MISC,
-            description: 'Returns a comma-separated list of expressions that have available sprites for the current character.',
+            description: 'Returns a list with all the available expressions provided by the Classifier API.',
             returns: 'Expression label list',
             exampleUsage: '{{availableExpressions}}',
         });
@@ -3905,8 +3905,8 @@ export async function init() {
         );
 
         MacrosParser.registerMacro('availableExpressions',
-            () => getAvailableExpressionsList().join(', '),
-            'Returns a comma-separated list of expressions that have available sprites for the current character.',
+            () => getCachedExpressions().join(', '),
+            t`Returns a list with all the available expressions provided by the Classifier API.`,
         );
     }
 }

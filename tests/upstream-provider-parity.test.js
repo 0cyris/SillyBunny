@@ -5,7 +5,7 @@ import { parse } from 'acorn';
 import { applyClaudeModelParameterConstraints, applyKimiK3ModelParameterConstraints, isKimiK3Model } from '../public/scripts/openai-model-capabilities.js';
 import { migrateNanoGptProviderSettings } from '../public/scripts/openai-preset-utils.js';
 
-const sources = Object.fromEntries(['openai', 'custom-request', 'reasoning'].map(name => {
+const sources = Object.fromEntries(['openai', 'custom-request', 'reasoning', 'tokenizers'].map(name => {
     const source = readFileSync(new URL(`../public/scripts/${name}.js`, import.meta.url), 'utf8');
     return [name, { source, ast: parse(source, { ecmaVersion: 'latest', sourceType: 'module' }) }];
 }));
@@ -64,6 +64,7 @@ function makeRuntime(overrides = {}) {
     ]);
     load(context, 'custom-request', ['BOOLEAN_CHAT_COMPLETION_FIELDS', 'coerceRequestBoolean', 'normalizeChatCompletionBooleanFields', 'ChatCompletionService']);
     load(context, 'reasoning', ['extractReasoningFromData']);
+    load(context, 'tokenizers', ['getTokenizerModel']);
     return {
         settings,
         powerUser: context.power_user,
@@ -71,11 +72,64 @@ function makeRuntime(overrides = {}) {
         stream: (...args) => context.getStreamingReply(...args),
         extract: (...args) => context.extractReasoningFromData(...args),
         error: (...args) => context.getChatCompletionErrorMessage(...args),
+        tokenizer: () => context.getTokenizerModel(),
         service: vm.runInContext('ChatCompletionService', context),
     };
 }
 
 describe('upstream provider request integration', () => {
+    for (const [source, model] of [
+        ['openai', 'gpt-6-astra'],
+        ['openai', 'gpt-6-astra-2026-09-14'],
+        ['openai_responses', 'gpt-6-astra'],
+        ['azure_openai', 'gpt-6-astra'],
+        ['azure_openai', 'gpt-6-astra-2026-09-14'],
+        ['openrouter', 'openai/gpt-6-astra'],
+        ['openrouter', 'openai/gpt-6-astra-2026-09-14'],
+    ]) {
+        test(`normalizes Astra generation parameters for ${source} model ${model}`, async () => {
+            const runtime = makeRuntime({ chat_completion_source: source, reasoning_effort: 'max' });
+            const { generate_data: payload } = await runtime.build(model, 'normal', [{ role: 'user', content: 'Hello' }]);
+
+            expect(payload).toMatchObject({ model, max_completion_tokens: 120, reasoning_effort: 'max' });
+            expect(payload).not.toHaveProperty('max_tokens');
+            expect(payload).not.toHaveProperty('temperature');
+            expect(payload).not.toHaveProperty('top_p');
+            expect(payload).not.toHaveProperty('logprobs');
+            expect(payload).not.toHaveProperty('top_logprobs');
+        });
+    }
+
+    for (const source of ['openai', 'azure_openai', 'openrouter']) {
+        test(`preserves earlier GPT sampling behavior for ${source}`, async () => {
+            const runtime = makeRuntime({ chat_completion_source: source });
+            const { generate_data: gpt4 } = await runtime.build('gpt-4o', 'normal', []);
+            const { generate_data: gpt5 } = await runtime.build('gpt-5.6-sol', 'normal', []);
+
+            expect(gpt4).toMatchObject({ max_tokens: 120, temperature: 1, top_p: 0.9, logprobs: 5 });
+            expect(gpt4).not.toHaveProperty('max_completion_tokens');
+            expect(gpt5).toMatchObject({ max_completion_tokens: 120, temperature: 1, top_p: 0.9 });
+            expect(gpt5).not.toHaveProperty('max_tokens');
+            expect(gpt5).not.toHaveProperty('logprobs');
+        });
+    }
+
+    for (const [model, tokenizer] of [
+        ['gpt-6-astra', 'gpt-4o'],
+        ['openai/gpt-6-astra', 'gpt-4o'],
+        ['gpt-6-astra-2026-09-14', 'gpt-4o'],
+        ['gpt-5.6-sol', 'gpt-4o'],
+        ['gpt-4', 'gpt-4'],
+        ['gpt-3.5-turbo', 'gpt-3.5-turbo'],
+        ['unknown-model', 'gpt-3.5-turbo'],
+    ]) {
+        test(`selects the ElectronHub tokenizer for ${model}`, () => {
+            const runtime = makeRuntime({ chat_completion_source: 'electronhub', electronhub_model: model });
+
+            expect(runtime.tokenizer()).toBe(tokenizer);
+        });
+    }
+
     test('requests and extracts Fireworks reasoning without attaching quiet requests to a chat', async () => {
         const runtime = makeRuntime({ chat_completion_source: 'fireworks', reasoning_effort: 'min' });
         const messages = [{ role: 'user', content: 'Hello' }];

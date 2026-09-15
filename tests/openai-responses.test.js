@@ -357,6 +357,7 @@ describe('OpenAI Responses integration', () => {
                         model: 'gpt-6-astra',
                         messages,
                         reasoning_effort: effort,
+                        verbosity: 'low',
                         stream: false,
                         ...limits,
                         temperature: 0.7,
@@ -380,6 +381,7 @@ describe('OpenAI Responses integration', () => {
                 expect(options.headers.Authorization).toBe('Bearer astra-test-key');
                 expect(body[isResponses ? 'max_output_tokens' : 'max_completion_tokens']).toBe(expectedLimit);
                 expect(isResponses ? body.reasoning.effort : body.reasoning_effort).toBe(effort);
+                expect(isResponses ? body.text.verbosity : body.verbosity).toBe('low');
                 expect(body.stream).toBe(false);
                 for (const key of ['max_tokens', 'temperature', 'top_p', 'frequency_penalty', 'presence_penalty', 'logit_bias', 'stop', 'logprobs', 'top_logprobs', 'tools', 'tool_choice']) {
                     expect(body).not.toHaveProperty(key);
@@ -399,9 +401,63 @@ describe('OpenAI Responses integration', () => {
         }
     });
 
-    test('uses the GPT-5 token-count estimate for Astra', async () => {
+    test.each([
+        [CHAT_COMPLETION_SOURCES.AZURE_OPENAI, 'gpt-6-astra'],
+        [CHAT_COMPLETION_SOURCES.AZURE_OPENAI, 'gpt-6-astra-snapshot'],
+        [CHAT_COMPLETION_SOURCES.OPENROUTER, 'openai/gpt-6-astra'],
+    ])('applies upstream Astra constraints to direct %s requests for %s', async (source, model) => {
+        const isAzure = source === CHAT_COMPLETION_SOURCES.AZURE_OPENAI;
+        const manager = new SecretManager(userDirectories);
+        manager.writeSecret(isAzure ? SECRET_KEYS.AZURE_OPENAI : SECRET_KEYS.OPENROUTER, 'astra-routing-test-key');
+        const tools = [{ type: 'function', function: { name: 'test', parameters: { type: 'object', properties: {} } } }];
+        const providerFetch = createProviderFetchSpy((_url, options) => {
+            return Promise.resolve(jsonResponse(upstream.handleChatCompletions(JSON.parse(options.body))));
+        });
+
+        try {
+            for (const [limits, expectedLimit] of [
+                [{ max_tokens: 32 }, 32],
+                [{ max_completion_tokens: 64 }, 64],
+                [{ max_tokens: 32, max_completion_tokens: 64 }, 32],
+            ]) {
+                const response = await fetch('http://127.0.0.1:3010/api/backends/chat-completions/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_completion_source: source,
+                        model,
+                        messages: [{ role: 'user', content: 'Hello' }],
+                        azure_base_url: 'https://azure.example',
+                        azure_deployment_name: 'astra',
+                        azure_api_version: '2025-04-01-preview',
+                        stream: false,
+                        ...limits,
+                        temperature: 0.7,
+                        top_p: 0.9,
+                        logprobs: 5,
+                        top_logprobs: 5,
+                        tools,
+                        tool_choice: 'auto',
+                    }),
+                });
+
+                expect(response.status).toBe(200);
+                const body = JSON.parse(providerFetch.mock.calls.at(-1)[1].body);
+                expect(body.max_completion_tokens).toBe(expectedLimit);
+                for (const key of ['max_tokens', 'temperature', 'top_p', 'logprobs', 'top_logprobs']) {
+                    expect(body).not.toHaveProperty(key);
+                }
+                expect(body.tools).toEqual(isAzure ? undefined : tools);
+                expect(body.tool_choice).toBe(isAzure ? undefined : 'auto');
+            }
+        } finally {
+            resetNodeFetchMock();
+        }
+    });
+
+    test.each(['gpt-6-astra', 'openai/gpt-6-astra', 'gpt-6-astra-snapshot'])('uses the GPT-5 token-count estimate for %s', async (model) => {
         const { getTokenizerModel } = await import('../src/endpoints/tokenizers.js');
-        expect(getTokenizerModel('gpt-6-astra')).toBe(getTokenizerModel('gpt-5.6-sol'));
+        expect(getTokenizerModel(model)).toBe(getTokenizerModel('gpt-5.6-sol'));
     });
 
     test.each(['gpt-5.4', 'gpt-6-astra'])('streams %s Responses API chunks as Chat Completions SSE', async (model) => {

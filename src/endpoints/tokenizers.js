@@ -577,16 +577,11 @@ function getWebTokenizersChunks(tokenizer, ids) {
  * @returns {string} Tokenizer model to use
  */
 export function getTokenizerModel(requestModel) {
-    // SillyBunny, ponytail: estimate Astra with GPT-5's tokenizer until an Astra encoding is published.
-    if (requestModel === 'gpt-6-astra') {
-        return 'o1';
-    }
-
     if (requestModel === 'o1' || requestModel.includes('o1-preview') || requestModel.includes('o1-mini') || requestModel.includes('o3-mini')) {
         return 'o1';
     }
 
-    if (requestModel.includes('gpt-5') || requestModel.includes('o3') || requestModel.includes('o4-mini')) {
+    if (requestModel.includes('gpt-5') || requestModel.includes('gpt-6-astra') || requestModel.includes('o3') || requestModel.includes('o4-mini')) {
         return 'o1';
     }
 

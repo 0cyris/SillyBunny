@@ -119,33 +119,36 @@ test('OpenAI pickers include GPT-5.6 and GPT-6 Astra and omit retired native Ope
     expect(readSource('../public/index.html')).toContain('<option value="gpt-5.3-chat-latest">gpt-5.3-chat-latest (deprecated)</option>');
 });
 
-test('GPT-6 Astra enables images without advertising unsupported tool calls in either API mode', () => {
-    const imageSupport = readSource('../public/scripts/openai.js').match(/export function isImageInliningSupported\(\) \{[\s\S]*?\n\}/)[0].replace('export ', '');
-    const toolSupport = readSource('../public/scripts/tool-calling.js').match(/static isToolCallingSupported\([\s\S]*?\n {4}\}/)[0].replace('static ', 'function ');
+for (const model of ['gpt-6-astra', 'gpt-6-astra-2026-09-14']) {
+    test(`${model} enables images without advertising unsupported tool calls`, () => {
+        const imageSupport = readSource('../public/scripts/openai.js').match(/export function isImageInliningSupported\(\) \{[\s\S]*?\n\}/)[0].replace('export ', '');
+        const toolSupport = readSource('../public/scripts/tool-calling.js').match(/static isToolCallingSupported\([\s\S]*?\n {4}\}/)[0].replace('static ', 'function ');
 
-    for (const source of [CHAT_COMPLETION_SOURCES.OPENAI, CHAT_COMPLETION_SOURCES.OPENAI_RESPONSES]) {
-        const settings = {
-            chat_completion_source: source,
-            openai_model: 'gpt-6-astra',
-            media_inlining: true,
-            function_calling: true,
-            custom_prompt_post_processing: 0,
-        };
-        const context = {
-            main_api: 'openai',
-            chat_completion_sources: CHAT_COMPLETION_SOURCES,
-            oai_settings: settings,
-            getChatCompletionModel: () => settings.openai_model,
-            custom_prompt_post_processing_types: { NONE: 0 },
-            model_list: [],
-        };
+        for (const source of [CHAT_COMPLETION_SOURCES.OPENAI, CHAT_COMPLETION_SOURCES.OPENAI_RESPONSES, CHAT_COMPLETION_SOURCES.AZURE_OPENAI]) {
+            const settings = {
+                chat_completion_source: source,
+                openai_model: model,
+                azure_openai_model: model,
+                media_inlining: true,
+                function_calling: true,
+                custom_prompt_post_processing: 0,
+            };
+            const context = {
+                main_api: 'openai',
+                chat_completion_sources: CHAT_COMPLETION_SOURCES,
+                oai_settings: settings,
+                getChatCompletionModel: () => settings.openai_model,
+                custom_prompt_post_processing_types: { NONE: 0 },
+                model_list: [],
+            };
 
-        expect(runInNewContext(`(${imageSupport})()`, context)).toBe(true);
-        expect(runInNewContext(`(${toolSupport})()`, context)).toBe(false);
-        settings.openai_model = 'gpt-5.6-sol';
-        expect(runInNewContext(`(${toolSupport})()`, context)).toBe(source === CHAT_COMPLETION_SOURCES.OPENAI);
-    }
-});
+            expect(runInNewContext(`(${imageSupport})()`, context)).toBe(true);
+            expect(runInNewContext(`(${toolSupport})()`, context)).toBe(false);
+            settings.openai_model = 'gpt-5.6-sol';
+            expect(runInNewContext(`(${toolSupport})()`, context)).toBe(source !== CHAT_COMPLETION_SOURCES.OPENAI_RESPONSES);
+        }
+    });
+}
 
 test('OpenAI image picker omits retired DALL-E models', () => {
     const source = readSource('../public/scripts/extensions/stable-diffusion/index.js');
@@ -155,20 +158,21 @@ test('OpenAI image picker omits retired DALL-E models', () => {
     expect(imageModels).toEqual(expect.not.arrayContaining(['dall-e-2', 'dall-e-3']));
 });
 
-test('GPT-5.6 supports distinct max reasoning effort and its 1.05-million-token context', () => {
+test('GPT-5.6 and GPT-6 Astra support distinct max reasoning effort and 1.05-million-token context', () => {
     const constants = readSource('../src/constants.js');
     const openAiScript = readSource('../public/scripts/openai.js');
 
-    for (const model of gpt56Models) {
+    const models = [...gpt56Models, 'gpt-6-astra'];
+    for (const model of models) {
         expect(constants).toContain(`'${model}'`);
     }
     const contextLimit = openAiScript.match(/function getMaxContextOpenAI\(value\) \{[\s\S]*?\n\}/)[0];
+    const contextConstants = openAiScript.match(/^const (?:max_[a-z0-9]+|unlocked_max) = .+;$/gm).join('\n');
     const reasoningEffort = openAiScript.match(/function getReasoningEffort\([\s\S]*?\n\}/)[0];
-    for (const model of gpt56Models) {
-        expect(runInNewContext(`(${contextLimit})(model)`, {
+    for (const model of models) {
+        expect(runInNewContext(`${contextConstants}\n(${contextLimit})(model)`, {
             model,
             isMaxContextUnlockedForSource: () => false,
-            max_1050k: 1050000,
         })).toBe(1050000);
         for (const source of [CHAT_COMPLETION_SOURCES.OPENAI, CHAT_COMPLETION_SOURCES.OPENAI_RESPONSES, CHAT_COMPLETION_SOURCES.CUSTOM]) {
             expect(runInNewContext(`(${reasoningEffort})(settings, model)`, {
@@ -180,6 +184,31 @@ test('GPT-5.6 supports distinct max reasoning effort and its 1.05-million-token 
         }
     }
 });
+
+for (const [model, expected] of [
+    ['gpt-6-astra-2026-09-14', 1050000],
+    ['gpt-5.4', 1000000],
+    ['gpt-5-mini', 400000],
+    ['gpt-4o', 128000],
+    ['gpt-4-0314', 8191],
+    ['gpt-3.5-turbo', 4095],
+    ['unknown-model', 128000],
+]) {
+    test(`uses upstream context limits for ${model} while preserving the context unlock`, () => {
+        const source = readSource('../public/scripts/openai.js');
+        const contextLimit = source.match(/function getMaxContextOpenAI\(value\) \{[\s\S]*?\n\}/)[0];
+        const contextConstants = source.match(/^const (?:max_[a-z0-9]+|unlocked_max) = .+;$/gm).join('\n');
+
+        expect(runInNewContext(`${contextConstants}\n(${contextLimit})(model)`, {
+            model,
+            isMaxContextUnlockedForSource: () => false,
+        })).toBe(expected);
+        expect(runInNewContext(`${contextConstants}\n(${contextLimit})(model)`, {
+            model,
+            isMaxContextUnlockedForSource: () => true,
+        })).toBe(2000000);
+    });
+}
 
 test('Claude pickers include current Claude 5 models and omit all retired Claude IDs', () => {
     const mainSource = readSource('../public/index.html');
@@ -193,6 +222,7 @@ test('Claude pickers include current Claude 5 models and omit all retired Claude
     expect(mainPicker).toEqual(expect.arrayContaining(currentClaudeModels));
     expect(mainPicker).toContain('claude-fable-5-1');
     expect(captionPicker).toEqual(expect.arrayContaining(currentClaudeModels));
+    expect(captionPicker).toContain('claude-fable-5-1');
     expect(mainPicker).toEqual(expect.not.arrayContaining(retiredClaudeModels));
     expect(captionPicker).toEqual(expect.not.arrayContaining(retiredClaudeModels));
     expect(openAiScript).toContain('claude_model: \'claude-opus-5\'');

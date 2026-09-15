@@ -112,6 +112,10 @@ const STARTER_PACK_EXTENSIONS = Object.freeze({
         id: 'third-party/SillyBunny-PromptTags',
         repoUrl: 'https://github.com/SillyBunnyTeam/SillyBunny-PromptTags',
     }),
+    alternateDescriptions: Object.freeze({
+        id: 'third-party/SillyBunny-AlternateDescriptions',
+        repoUrl: 'https://github.com/SillyBunnyTeam/SillyBunny-AlternateDescriptions',
+    }),
 });
 
 const WELCOME_TUTORIAL_STEPS = Object.freeze([
@@ -1029,6 +1033,12 @@ function buildStarterPackItems() {
                 body: 'Adds automatic XML tags to SillyBunny\'s prompt sections. This can be useful if you want to implement XML prompting without modifying any existing presets, personas, lorebooks, or character cards.',
                 icon: 'fa-tags',
                 extensionName: STARTER_PACK_EXTENSIONS.promptTags.id,
+            }),
+            buildExtensionStarterPackItem({
+                title: 'Alternate Descriptions',
+                body: 'Keeps multiple versions of a character\'s description, personality, scenario, example dialogue, main prompt, and post-history instructions in one card, with tools to switch between them.',
+                icon: 'fa-layer-group',
+                extensionName: STARTER_PACK_EXTENSIONS.alternateDescriptions.id,
             }),
         ],
         optionalUnofficial: [

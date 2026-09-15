@@ -3,8 +3,11 @@
  * pre-/post-generation context intercept agents. Kept dependency-free so it
  * can be unit tested without mocking the rest of the agent runner, following
  * this codebase's convention of factoring pure logic out of agent-runner.js
- * (see agent-tool-call-loop.js and tool-call-recurse-limit.js).
+ * (see agent-tool-call-loop.js and tool-call-recurse-limit.js). The only
+ * import is the equally pure prompt-segment tag reader.
  */
+
+import { PROMPT_SEGMENTS, getPromptSegment } from '../../openai-prompt-segments.js';
 
 const POST_MAIN_GENERATION_INTERCEPT_TIMING = 'post-main-generation';
 
@@ -12,6 +15,13 @@ const INSERT_OUTPUT_ONLY_INSTRUCTION = 'You are producing a short block of text 
     + 'context before the main model sees it — not a copy of the context itself. Return only the text to '
     + 'insert (e.g. retrieved facts). Never return the outgoing context, a JSON array, role labels, or a '
     + 'transcript. If there is nothing to insert, return an empty response.';
+
+const MAIN_PROMPT_INSERT_OUTPUT_ONLY_INSTRUCTION = 'You are an in-chat agent step running before the main model '
+    + 'replies, not the main model. Everything before this message is the main model\'s prompt: follow its '
+    + 'instructions, tool guidance, and data to carry out the agent instructions in this message, but do not '
+    + 'reply to or continue the conversation. Return only the text to insert into the main model\'s context '
+    + '(e.g. retrieved facts). Never return a transcript, a JSON array, or role labels. If there is nothing '
+    + 'to insert, return an empty response.';
 
 /**
  * Normalizes a stored applyMode value: only 'wrap' and 'patch' are
@@ -79,9 +89,13 @@ export function resolveContextInterceptScope({ applyMode, contextScope, contextF
 }
 
 /**
- * Selects the last N chat-format messages an intercept agent's own request
- * should see. Only meaningful when resolveContextInterceptScope returned
- * 'recent'; callers otherwise send the full message list.
+ * Trims chat history, and only chat history, down to the last N messages for
+ * an intercept agent's own request. Preset prompts, the character card, World
+ * Info, extension prompts, and in-chat depth injections are always kept in
+ * place: only messages tagged as history by prompt assembly can be dropped,
+ * and untagged messages (e.g. ones another listener rebuilt) count as prompt
+ * content. The kept history never starts on an orphaned tool result.
+ * Only meaningful when resolveContextInterceptScope returned 'recent'.
  * @param {object[]} messages
  * @param {unknown} count
  * @returns {object[]}
@@ -91,9 +105,66 @@ export function selectRecentChatMessages(messages, count) {
         return [];
     }
 
+    const historyIndexes = [];
+    messages.forEach((message, index) => {
+        if (getPromptSegment(message) === PROMPT_SEGMENTS.HISTORY) {
+            historyIndexes.push(index);
+        }
+    });
+
     const recentCount = Number.isFinite(Number(count)) && Number(count) > 0
         ? Math.floor(Number(count))
-        : messages.length;
+        : historyIndexes.length;
 
-    return messages.slice(-recentCount);
+    if (historyIndexes.length <= recentCount) {
+        return [...messages];
+    }
+
+    let firstKept = historyIndexes.length - recentCount;
+    // A tool result can't lead the kept history without the assistant tool call that produced it.
+    while (firstKept < historyIndexes.length && messages[historyIndexes[firstKept]]?.role === 'tool') {
+        firstKept++;
+    }
+
+    const dropped = new Set(historyIndexes.slice(0, firstKept));
+    return messages.filter((_, index) => !dropped.has(index));
+}
+
+/**
+ * Resolves whether an intercept agent's own request is built from the main
+ * prompt itself rather than from the agent prompt plus the context as data.
+ * Only insert-output-only agents in chat format can use the main prompt: every
+ * other apply mode needs the context as data to rewrite or echo it.
+ * @param {{ applyMode?: unknown, insertOutputOnly?: unknown, promptSource?: unknown, contextFormat?: string, timing?: string }} [options]
+ * @returns {'context'|'main-prompt'}
+ */
+export function resolveContextInterceptPromptSource({ applyMode, insertOutputOnly, promptSource, contextFormat, timing = '' } = {}) {
+    if (promptSource !== 'main-prompt' || contextFormat !== 'chat') {
+        return 'context';
+    }
+
+    return isInsertOutputOnlyIntercept({ applyMode, insertOutputOnly }, timing) ? 'main-prompt' : 'context';
+}
+
+/**
+ * Builds a main-prompt intercept request: the main model's prompt as real
+ * messages, so instructions from the preset and other extensions reach the
+ * agent as instructions rather than as data, followed by the agent prompt as
+ * the final user turn. Copies each message so the chat sent to the main model
+ * is never mutated.
+ * @param {{ chatMessages?: object[], agentPrompt?: string, generationType?: string }} [options]
+ * @returns {object[]}
+ */
+export function buildMainPromptInterceptMessages({ chatMessages, agentPrompt = '', generationType = '' } = {}) {
+    const promptMessages = (Array.isArray(chatMessages) ? chatMessages : [])
+        .filter(message => message && typeof message === 'object')
+        .map(message => ({ ...message }));
+
+    return [
+        ...promptMessages,
+        {
+            role: 'user',
+            content: `${agentPrompt}\n\n${MAIN_PROMPT_INSERT_OUTPUT_ONLY_INSTRUCTION}\n\nGeneration type: ${generationType}`,
+        },
+    ];
 }

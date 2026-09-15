@@ -90,6 +90,7 @@ import { setOpenRouterProviders, syncNanoGptProvidersForModel, syncOpenRouterPro
 import { getNanoGptServiceTiers, isNanoGptPayg, updateServiceTierOptions } from './service-tiers.js';
 import { hasTextOrArrayPayload, shouldRetainContextAtDepth, stripHtmlTagsFromContext, stripOocBlocksFromContext } from './ooc-blocks.js';
 import { checkPostInterceptChatBudget, shouldCheckPostInterceptChatBudget } from './openai-prompt-budget.js';
+import { classifyChatCompletionMessage, tagPromptSegment } from './openai-prompt-segments.js';
 import {
     buildChatCompletionPresetForSave,
     buildChatCompletionSamplingProfileKey,
@@ -1363,6 +1364,10 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             const prepared = preparedPrompt ?? promptManager.preparePrompt(prompt);
             preparedPrompt = null;
             const message = await Message.fromPromptAsync(prepared);
+            // SillyBunny: keep depth injections distinguishable from real chat history after assembly.
+            if (chatPrompt.injected === true) {
+                message.injected = true;
+            }
             if (survivingContributions.length > 0) {
                 message.agentContributions = survivingContributions;
             }
@@ -6601,7 +6606,7 @@ class MessageCollection {
     getChat() {
         return this.collection.reduce((acc, message) => {
             if (message.content || message.tool_calls) {
-                acc.push({
+                acc.push(tagPromptSegment({
                     role: message.role,
                     content: message.content,
                     ...(message.name && { name: message.name }),
@@ -6609,7 +6614,7 @@ class MessageCollection {
                     ...(message.role === 'tool' && { tool_call_id: message.identifier }),
                     ...(message.signature && { signature: message.signature }),
                     ...(message.reasoning && { reasoning: message.reasoning }),
-                });
+                }, classifyChatCompletionMessage(message)));
             }
             return acc;
         }, []);
@@ -6708,6 +6713,10 @@ export class ChatCompletion {
             if (shouldSquash(message)) {
                 if (lastMessage && shouldSquash(lastMessage)) {
                     lastMessage.content += '\n' + message.content;
+                    // A squashed-in depth injection must not become trimmable chat history.
+                    if (message.injected === true) {
+                        lastMessage.injected = true;
+                    }
                     lastMessage.tokens = await tokenHandler.countAsync({ role: lastMessage.role, content: lastMessage.content });
                 } else {
                     squashedMessages.push(message);
@@ -6923,7 +6932,8 @@ export class ChatCompletion {
                     ...(item.signature ? { signature: item.signature } : {}),
                     ...(item.reasoning ? { reasoning: item.reasoning } : {}),
                 };
-                chat.push(message);
+                // Non-enumerable, so it never reaches the request payload.
+                chat.push(tagPromptSegment(message, classifyChatCompletionMessage(item)));
             } else {
                 this.log(`Skipping invalid or empty message in collection: ${JSON.stringify(item)}`);
             }

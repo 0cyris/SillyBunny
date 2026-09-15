@@ -65,7 +65,8 @@ import {
  * @property {number} maxTokens
  * @property {boolean} insertOutputOnly - Wrap mode only: the agent's output is insert-only text (e.g. retrieved facts), never a copy of the context.
  * @property {'full'|'recent'} contextScope - Insert-style modes only (wrap/patch); replace always sees the full context.
- * @property {number} contextRecentMessages - Message count used when contextScope is 'recent' and contextFormat is 'chat'.
+ * @property {number} contextRecentMessages - Chat history message count used when contextScope is 'recent' and contextFormat is 'chat'; prompts and injections are always kept.
+ * @property {'context'|'main-prompt'} promptSource - Insert-output-only chat intercepts only: 'main-prompt' sends the agent the main prompt itself as messages instead of the context as data.
  */
 
 /**
@@ -1260,6 +1261,7 @@ export function createDefaultAgent() {
             insertOutputOnly: false,
             contextScope: 'full',
             contextRecentMessages: DEFAULT_CONTEXT_RECENT_MESSAGES,
+            promptSource: 'context',
         },
         postProcess: {
             enabled: false,
@@ -1430,6 +1432,7 @@ export function normalizeAgent(rawAgent = {}) {
                 1,
                 MAX_CONTEXT_RECENT_MESSAGES,
             ),
+            promptSource: rawPreProcess.promptSource === 'main-prompt' ? 'main-prompt' : defaults.preProcess.promptSource,
         },
         postProcess: {
             ...defaults.postProcess,

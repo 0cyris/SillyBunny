@@ -84,7 +84,48 @@ describe('context intercept config wiring', () => {
 
         expect(source).toContain('const scope = resolveContextInterceptScope({');
         expect(source).toContain('selectRecentChatMessages(currentChatMessages, agent?.preProcess?.contextRecentMessages)');
-        expect(source).toContain('runContextInterceptAgent(agent, contextText, activationSnapshot.generationType, \'chat\', { promptContextText });');
+        expect(source).toContain('runContextInterceptAgent(agent, contextText, activationSnapshot.generationType, \'chat\', { promptContextText, promptChatMessages });');
+    });
+
+    test('runContextInterceptAgent builds a main-prompt request only from the chat path\'s scoped messages', () => {
+        const source = getFunctionSource(runnerSource, 'runContextInterceptAgent');
+
+        expect(runnerSource).toContain('    buildMainPromptInterceptMessages,\n');
+        expect(runnerSource).toContain('    resolveContextInterceptPromptSource,\n');
+        expect(source).toContain('const promptSource = Array.isArray(options.promptChatMessages)');
+        expect(source).toContain('promptSource: agent?.preProcess?.promptSource,');
+        expect(source).toContain('buildMainPromptInterceptMessages({ chatMessages: options.promptChatMessages, agentPrompt: expandedPrompt, generationType })');
+        expect(source).toContain('promptSource,');
+
+        const textSource = getFunctionSource(runnerSource, 'runPreGenerationInterceptorsOnText');
+        expect(textSource).not.toContain('promptChatMessages');
+    });
+
+    test('the sanitizer and run-history label record the prompt source', () => {
+        const sanitizer = getFunctionSource(runnerSource, 'sanitizePreGenerationInterceptRunForStorage');
+        expect(sanitizer).toContain('promptSource: result.promptSource === \'main-prompt\' ? \'main-prompt\' : \'context\',');
+
+        const label = getFunctionSource(indexSource, 'getPreGenerationInterceptModeLabel');
+        expect(label).toContain('entry?.promptSource === \'main-prompt\' ? `${label}, main prompt` : label');
+    });
+
+    test('the editor exposes the prompt source only for insert-output-only intercepts', () => {
+        expect(editorHtml).toContain('id="ica--editor-pre-promptSource"');
+        expect(editorHtml).toContain('<option value="main-prompt">Main prompt + agent prompt</option>');
+        expect(indexSource).toContain('editorEl.find(\'#ica--editor-pre-promptSource\').val(preProcess.promptSource === \'main-prompt\' ? \'main-prompt\' : \'context\');');
+        expect(indexSource).toContain('promptSource: editorEl.find(\'#ica--editor-pre-promptSource\').val()?.toString() === \'main-prompt\' ? \'main-prompt\' : \'context\',');
+
+        const visibilitySource = getFunctionSource(indexSource, 'updatePreProcessVisibility');
+        expect(visibilitySource).toContain('editorEl.find(\'#ica--pre-prompt-source-row\').toggle(interceptVisible && rawApplyMode === \'wrap-insert-output-only\');');
+    });
+
+    test('prompt assembly tags every emitted chat message with its segment and keeps injections marked', () => {
+        const openaiSource = readSource('public/scripts/openai.js');
+
+        expect(openaiSource).toContain('import { classifyChatCompletionMessage, tagPromptSegment } from \'./openai-prompt-segments.js\';');
+        expect(countOccurrences(openaiSource, 'classifyChatCompletionMessage(')).toBe(2);
+        expect(getFunctionSource(openaiSource, 'populateChatHistory')).toContain('if (chatPrompt.injected === true) {\n                message.injected = true;');
+        expect(openaiSource).toContain('if (message.injected === true) {\n                        lastMessage.injected = true;');
     });
 
     test('the pre-generation intercept sanitizer preserves insertOutputOnly and contextScope for storage', () => {

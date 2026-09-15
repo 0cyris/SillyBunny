@@ -442,6 +442,22 @@ describe('in-chat agent scoped enabled state', () => {
         expect(store.getAgentById('agent-huge-scope').preProcess.contextRecentMessages).toBe(store.MAX_CONTEXT_RECENT_MESSAGES);
     });
 
+    test('normalizes promptSource to context unless explicitly main-prompt', async () => {
+        const store = await importStore();
+
+        expect(store.createDefaultAgent().preProcess.promptSource).toBe('context');
+
+        store.loadAgents([
+            { id: 'agent-main-prompt', name: 'Main Prompt Agent', preProcess: { promptSource: 'main-prompt' } },
+            { id: 'agent-bogus-source', name: 'Bogus Source Agent', preProcess: { promptSource: 'preset' } },
+            { id: 'agent-legacy-source', name: 'Legacy Agent', preProcess: {} },
+        ]);
+
+        expect(store.getAgentById('agent-main-prompt').preProcess.promptSource).toBe('main-prompt');
+        expect(store.getAgentById('agent-bogus-source').preProcess.promptSource).toBe('context');
+        expect(store.getAgentById('agent-legacy-source').preProcess.promptSource).toBe('context');
+    });
+
     test('defaults agents to inline execution with companion settings available', async () => {
         const store = await importStore();
         const agent = store.createDefaultAgent();

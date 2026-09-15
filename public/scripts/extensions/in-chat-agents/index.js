@@ -3017,6 +3017,7 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
     editorEl.find('#ica--editor-pre-maxTokens').val(preProcess.maxTokens ?? DEFAULT_AGENT_MAX_TOKENS);
     editorEl.find('#ica--editor-pre-contextScope').val(preProcess.contextScope === 'recent' ? 'recent' : 'full');
     editorEl.find('#ica--editor-pre-contextRecentMessages').val(preProcess.contextRecentMessages ?? DEFAULT_CONTEXT_RECENT_MESSAGES);
+    editorEl.find('#ica--editor-pre-promptSource').val(preProcess.promptSource === 'main-prompt' ? 'main-prompt' : 'context');
 
     // Post-process
     const postProcessType = agent.postProcess.type === 'append' ? 'append' : 'extract';
@@ -3490,6 +3491,8 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
         const scopeControlVisible = interceptVisible && applyMode !== 'replace';
         editorEl.find('#ica--pre-context-scope-row').toggle(scopeControlVisible);
         editorEl.find('#ica--pre-context-recent-row').toggle(scopeControlVisible && contextScope === 'recent');
+        // Every other apply mode needs the context as data to rewrite or echo it.
+        editorEl.find('#ica--pre-prompt-source-row').toggle(interceptVisible && rawApplyMode === 'wrap-insert-output-only');
     }
     editorEl.find('#ica--editor-pre-mode, #ica--editor-pre-applyMode, #ica--editor-pre-contextScope').on('change', updatePreProcessVisibility);
     updatePhaseVisibility();
@@ -3923,6 +3926,7 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
         maxTokens: Number(editorEl.find('#ica--editor-pre-maxTokens').val()) || DEFAULT_AGENT_MAX_TOKENS,
         contextScope: editorEl.find('#ica--editor-pre-contextScope').val()?.toString() === 'recent' ? 'recent' : 'full',
         contextRecentMessages: Number(editorEl.find('#ica--editor-pre-contextRecentMessages').val()) || DEFAULT_CONTEXT_RECENT_MESSAGES,
+        promptSource: editorEl.find('#ica--editor-pre-promptSource').val()?.toString() === 'main-prompt' ? 'main-prompt' : 'context',
     };
 
     if (isCompanionAgent(agent) && !agent.prompt.trim()) {
@@ -4889,7 +4893,8 @@ function getPreGenerationInterceptModeLabel(entry) {
     const mode = String(entry?.applyMode ?? 'replace');
     const timing = entry?.timing === 'post-main-generation' ? 'post-main' : 'pre-gen';
     if (mode === 'wrap') {
-        return entry?.insertOutputOnly === true ? `${timing} insert-output-only` : `${timing} wrap`;
+        const label = entry?.insertOutputOnly === true ? `${timing} insert-output-only` : `${timing} wrap`;
+        return entry?.promptSource === 'main-prompt' ? `${label}, main prompt` : label;
     }
     if (mode === 'patch') {
         return `${timing} patch`;

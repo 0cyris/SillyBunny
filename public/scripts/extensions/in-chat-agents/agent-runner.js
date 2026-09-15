@@ -58,8 +58,10 @@ import {
     summarizeAgentToolCallingPlan,
 } from './agent-tool-call-loop.js';
 import {
+    buildMainPromptInterceptMessages,
     isInsertOutputOnlyIntercept,
     normalizeInterceptApplyMode,
+    resolveContextInterceptPromptSource,
     resolveContextInterceptScope,
     selectContextInterceptInstruction,
     selectRecentChatMessages,
@@ -2990,6 +2992,7 @@ function sanitizePreGenerationInterceptRunForStorage(result) {
             : PRE_GENERATION_INTERCEPT_TIMING,
         contextFormat: result.contextFormat,
         contextScope: result.contextScope === 'recent' ? 'recent' : 'full',
+        promptSource: result.promptSource === 'main-prompt' ? 'main-prompt' : 'context',
         status: result.status,
         changed: Boolean(result.changed),
         beforeText: normalizeContentText(result.beforeText),
@@ -4671,6 +4674,16 @@ async function runContextInterceptAgent(agent, currentContextText, generationTyp
     // Scoping only ever trims what the agent's own request sees; the context actually
     // inserted into and sent to the main model is built from currentContextText, unaffected.
     const agentContextText = typeof options.promptContextText === 'string' ? options.promptContextText : currentContextText;
+    // Main-prompt requests need the (scoped) chat messages themselves, which only the chat path provides.
+    const promptSource = Array.isArray(options.promptChatMessages)
+        ? resolveContextInterceptPromptSource({
+            applyMode,
+            insertOutputOnly,
+            promptSource: agent?.preProcess?.promptSource,
+            contextFormat,
+            timing,
+        })
+        : 'context';
     const profileId = resolveAgentConnectionProfile(agent);
     const baseResult = {
         agentId: agent.id,
@@ -4680,6 +4693,7 @@ async function runContextInterceptAgent(agent, currentContextText, generationTyp
         timing,
         contextFormat,
         contextScope,
+        promptSource,
         changed: false,
         beforeText,
         afterText: beforeText,
@@ -4701,8 +4715,9 @@ async function runContextInterceptAgent(agent, currentContextText, generationTyp
         };
     }
 
-    const helperRequest = appendConfiguredHelperPrefillMessages(
-        buildContextInterceptMessages(expandedPrompt, agentContextText, generationType, contextFormat, timing, insertOutputOnly),
+    const helperRequest = appendConfiguredHelperPrefillMessages(promptSource === 'main-prompt'
+        ? buildMainPromptInterceptMessages({ chatMessages: options.promptChatMessages, agentPrompt: expandedPrompt, generationType })
+        : buildContextInterceptMessages(expandedPrompt, agentContextText, generationType, contextFormat, timing, insertOutputOnly),
     );
     const cancelRevision = agentGenerationCancelRevision;
     const skipChanges = timing === POST_MAIN_GENERATION_INTERCEPT_TIMING && Boolean(options?.skipChanges);
@@ -4894,13 +4909,17 @@ async function runPreGenerationInterceptorsOnChat(initialChatMessages, generatio
             contextScope: agent?.preProcess?.contextScope,
             contextFormat: 'chat',
         });
-        const promptContextText = scope === 'recent'
-            ? serializeChatContext(selectRecentChatMessages(currentChatMessages, agent?.preProcess?.contextRecentMessages))
-            : contextText;
+        // Recent scope drops only older chat history; every prompt and injection stays.
+        const promptChatMessages = scope === 'recent'
+            ? selectRecentChatMessages(currentChatMessages, agent?.preProcess?.contextRecentMessages)
+            : currentChatMessages;
+        const promptContextText = promptChatMessages === currentChatMessages
+            ? contextText
+            : serializeChatContext(promptChatMessages);
         let result = null;
 
         try {
-            result = await runContextInterceptAgent(agent, contextText, activationSnapshot.generationType, 'chat', { promptContextText });
+            result = await runContextInterceptAgent(agent, contextText, activationSnapshot.generationType, 'chat', { promptContextText, promptChatMessages });
             if (result.status !== 'changed') {
                 runs.push(result);
                 if (result.status === 'cancelled') {

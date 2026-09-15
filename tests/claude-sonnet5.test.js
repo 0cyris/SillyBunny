@@ -123,6 +123,46 @@ describe('Claude 5 backend request handling', () => {
         expect(body.top_k).toBeUndefined();
     });
 
+    test.each(['claude-fable-5-1', 'anthropic/claude-fable-5-1'])('%s uses native JSON output alongside adaptive thinking', async (model) => {
+        const getBody = captureClaudePayload();
+        const schema = {
+            type: 'object',
+            properties: { answer: { type: 'string' } },
+            required: ['answer'],
+            additionalProperties: false,
+        };
+        const res = await makeRequest({
+            model,
+            reasoning_effort: 'high',
+            json_schema: { name: 'answer', value: schema },
+        });
+
+        expect(res.status).toBe(200);
+        const body = getBody();
+        expect(body.output_config).toEqual({
+            format: { type: 'json_schema', schema },
+            effort: 'high',
+        });
+        expect(body.thinking).toEqual({ type: 'adaptive' });
+        expect(body).not.toHaveProperty('tools');
+        expect(body).not.toHaveProperty('tool_choice');
+    });
+
+    test.each(['claude-fable-5', 'claude-sonnet-5'])('%s keeps the existing forced-tool JSON output', async (model) => {
+        const getBody = captureClaudePayload();
+        const schema = { type: 'object', properties: { answer: { type: 'string' } } };
+        const res = await makeRequest({ model, json_schema: { name: 'answer', value: schema } });
+
+        expect(res.status).toBe(200);
+        expect(getBody().tools).toEqual([{
+            name: 'answer',
+            description: 'Well-formed JSON object',
+            input_schema: schema,
+        }]);
+        expect(getBody().tool_choice).toEqual({ type: 'tool', name: 'answer' });
+        expect(getBody().output_config?.format).toBeUndefined();
+    });
+
     test.each([
         ['claude-sonnet-5', 'xhigh'],
         ['claude-opus-5', 'xhigh'],

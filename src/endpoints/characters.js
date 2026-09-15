@@ -1347,7 +1347,7 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
             let chatsRestored = true;
             if (chatsCopied) {
                 try {
-                    fs.cpSync(newChatsPath, oldChatsPath, { recursive: true });
+                    fs.cpSync(newChatsPath, oldChatsPath, { recursive: true, filter: () => true });
                     fs.rmSync(newChatsPath, { recursive: true, force: true });
                 } catch (rollbackError) {
                     chatsRestored = false;

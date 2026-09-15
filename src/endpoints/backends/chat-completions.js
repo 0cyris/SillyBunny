@@ -384,6 +384,7 @@ async function sendClaudeRequest(request, response) {
         const convertedPrompt = convertClaudeMessages(request.body.messages, request.body.assistant_prefill, useSystemPrompt, useTools, getPromptNames(request));
         // SillyBunny: claude-fable-5 support (substring match also catches router ids like 'anthropic/claude-fable-5')
         const isFableModel = /claude-fable/.test(request.body.model);
+        const isFable51Model = /claude-fable-5-1/.test(request.body.model);
         // SillyBunny: Claude Sonnet 5 and Opus 5 require adaptive thinking and reject sampling params and assistant prefill.
         const isSonnetOrOpus5 = /claude-(?:sonnet|opus)-5/.test(request.body.model);
         const useThinking = /^claude-(3-7|opus-4|sonnet-4|haiku-4-5|opus-4-5|opus-4-6|opus-4-7|sonnet-4-6)/.test(request.body.model) || isFableModel || isSonnetOrOpus5;
@@ -433,15 +434,24 @@ async function sendClaudeRequest(request, response) {
             }
         }
 
-        // Structured output is a forced tool
+        // Fable 5.1 rejects forced tools, but supports native JSON outputs.
         if (request.body.json_schema) {
-            const jsonTool = {
-                name: request.body.json_schema.name,
-                description: request.body.json_schema.description || 'Well-formed JSON object',
-                input_schema: request.body.json_schema.value,
-            };
-            requestBody.tools = [...(requestBody.tools || []), jsonTool];
-            requestBody.tool_choice = { type: 'tool', name: request.body.json_schema.name };
+            if (isFable51Model) {
+                requestBody.output_config = {
+                    format: {
+                        type: 'json_schema',
+                        schema: request.body.json_schema.value,
+                    },
+                };
+            } else {
+                const jsonTool = {
+                    name: request.body.json_schema.name,
+                    description: request.body.json_schema.description || 'Well-formed JSON object',
+                    input_schema: request.body.json_schema.value,
+                };
+                requestBody.tools = [...(requestBody.tools || []), jsonTool];
+                requestBody.tool_choice = { type: 'tool', name: request.body.json_schema.name };
+            }
         }
 
         if (useWebSearch) {
@@ -2919,16 +2929,22 @@ export async function handleChatCompletionsGenerate(request, response) {
         // to the provider verbatim.
         applyReasoningEffortNormalization(request.body);
 
-        // SillyBunny: apply Astra's reasoning-model request constraints before dispatch so
-        // profile overrides and Conversation REST requests follow the same native OpenAI path.
-        if ([CHAT_COMPLETION_SOURCES.OPENAI, CHAT_COMPLETION_SOURCES.OPENAI_RESPONSES].includes(request.body.chat_completion_source)
-            && request.body.model === 'gpt-6-astra') {
+        // SillyBunny: enforce upstream Astra constraints before dispatch so profile overrides
+        // and Conversation REST requests follow the same rules as the frontend builder.
+        if ([CHAT_COMPLETION_SOURCES.OPENAI, CHAT_COMPLETION_SOURCES.OPENAI_RESPONSES, CHAT_COMPLETION_SOURCES.AZURE_OPENAI, CHAT_COMPLETION_SOURCES.OPENROUTER].includes(request.body.chat_completion_source)
+            && /gpt-6-astra/.test(request.body.model)) {
             // A profile override can supply max_tokens after a preset set max_completion_tokens.
             request.body.max_completion_tokens = request.body.max_tokens ?? request.body.max_completion_tokens;
-            for (const key of ['max_tokens', 'temperature', 'top_p', 'frequency_penalty', 'presence_penalty', 'logit_bias', 'stop', 'logprobs', 'top_logprobs']) {
+            for (const key of ['max_tokens', 'temperature', 'top_p', 'logprobs', 'top_logprobs']) {
                 delete request.body[key];
             }
-            if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENAI) {
+            if ([CHAT_COMPLETION_SOURCES.OPENAI, CHAT_COMPLETION_SOURCES.OPENAI_RESPONSES].includes(request.body.chat_completion_source)) {
+                for (const key of ['frequency_penalty', 'presence_penalty', 'logit_bias', 'stop']) {
+                    delete request.body[key];
+                }
+            }
+            if ([CHAT_COMPLETION_SOURCES.OPENAI, CHAT_COMPLETION_SOURCES.AZURE_OPENAI].includes(request.body.chat_completion_source)
+                && /^gpt-6-astra/.test(request.body.model)) {
                 delete request.body.tools;
                 delete request.body.tool_choice;
             }

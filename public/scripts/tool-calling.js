@@ -619,8 +619,9 @@ export class ToolManager {
             return false;
         }
 
-        // SillyBunny: Astra supports tool calls only through the Responses API.
-        if (settings.chat_completion_source === chat_completion_sources.OPENAI && model === 'gpt-6-astra') {
+        // GPT-6 Astra supports tool calling only through the Responses API.
+        if ([chat_completion_sources.OPENAI, chat_completion_sources.AZURE_OPENAI].includes(settings.chat_completion_source)
+            && /^gpt-6-astra/.test(model)) {
             return false;
         }
 

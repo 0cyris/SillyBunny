@@ -58,7 +58,7 @@ import {
     summarizeAgentToolCallingPlan,
 } from './agent-tool-call-loop.js';
 import {
-    buildMainPromptInterceptMessages,
+    appendOwnPresetAgentTurn,
     isInsertOutputOnlyIntercept,
     normalizeInterceptApplyMode,
     resolveContextInterceptPromptSource,
@@ -66,8 +66,10 @@ import {
     selectContextInterceptInstruction,
     selectRecentChatMessages,
 } from './context-intercept-config.js';
+import { buildOwnPresetChatMessages } from './own-preset-prompt.js';
 import { excludeHiddenToolsFromMainGeneration } from './main-generation-tool-filter.js';
-import { getConnectionProfileDisplayName, getConnectionProfileModelName } from './profile-utils.js';
+import { getConnectionManagerRequestService, getConnectionProfileDisplayName, getConnectionProfileModelName } from './profile-utils.js';
+import { PROMPT_SEGMENTS, getPromptSegment } from '../../openai-prompt-segments.js';
 import {
     appendHelperPrefillMessages,
     parseHelperPrefillMessages,
@@ -2992,7 +2994,9 @@ function sanitizePreGenerationInterceptRunForStorage(result) {
             : PRE_GENERATION_INTERCEPT_TIMING,
         contextFormat: result.contextFormat,
         contextScope: result.contextScope === 'recent' ? 'recent' : 'full',
-        promptSource: result.promptSource === 'main-prompt' ? 'main-prompt' : 'context',
+        promptSource: result.promptSource === 'own-preset' ? 'own-preset' : 'context',
+        ...(result.promptSourceFallbackReason ? { promptSourceFallbackReason: String(result.promptSourceFallbackReason) } : {}),
+        ...(result.ownPresetName ? { ownPresetName: String(result.ownPresetName), ownPresetProfileId: String(result.ownPresetProfileId ?? '') } : {}),
         status: result.status,
         changed: Boolean(result.changed),
         beforeText: normalizeContentText(result.beforeText),
@@ -4659,6 +4663,171 @@ export async function runCompanionOutputPostPasses(companionAgent, initialText, 
     return { text: currentText, changed };
 }
 
+// customDepthWI_* (World Info depth entries) is NOT excluded: own-preset assembly does not
+// re-run World Info activation (see buildOwnPresetInterceptMessages), so these - registered by
+// the main generation's own World Info scan earlier in this same turn - are the only source of
+// WI depth content available here. customWIOutlet_* is excluded defensively even though its
+// position (NONE) is already filtered out by ownPresetExtensionPosition. personaDescription is
+// handled from character card fields instead, to avoid double-inclusion when its position is
+// IN_CHAT; the quiet/impersonation prompt is tied to the main generation type, not agent-facing.
+const OWN_PRESET_EXCLUDED_EXTENSION_PREFIXES = ['customWIOutlet_'];
+const OWN_PRESET_EXCLUDED_EXTENSION_KEYS = new Set(['PERSONA_DESCRIPTION', 'QUIET_PROMPT']);
+
+function ownPresetExtensionPosition(position) {
+    if (position === extension_prompt_types.BEFORE_PROMPT) return 'before';
+    if (position === extension_prompt_types.IN_PROMPT) return 'in-prompt';
+    if (position === extension_prompt_types.IN_CHAT) return 'in-chat';
+    return null;
+}
+
+function ownPresetExtensionRole(role) {
+    switch (Number(role)) {
+        case extension_prompt_roles.USER: return 'user';
+        case extension_prompt_roles.ASSISTANT: return 'assistant';
+        default: return 'system';
+    }
+}
+
+/**
+ * Extracts the plain chat-history turns from an already-scoped prompt-ready
+ * chat array (see selectRecentChatMessages), so own-preset assembly gets the
+ * same conversation turns regardless of which preset built the main context.
+ * @param {unknown} promptChatMessages
+ * @returns {{role: string, content: string}[]}
+ */
+function extractOwnPresetHistoryMessages(promptChatMessages) {
+    return (Array.isArray(promptChatMessages) ? promptChatMessages : [])
+        .filter(message => message && typeof message === 'object' && getPromptSegment(message) === PROMPT_SEGMENTS.HISTORY)
+        .map(message => ({ role: message.role, content: normalizeContentText(message.content) }));
+}
+
+/**
+ * Reads the live extension_prompts registry for own-preset assembly's
+ * BEFORE_PROMPT/IN_PROMPT/IN_CHAT extension entries (e.g. Compendium's
+ * injections, Author's Note). Honors each entry's filter, same as upstream's
+ * own prompt assembly.
+ * @returns {Promise<{position: string, depth: number, role: string, content: string}[]>}
+ */
+async function gatherOwnPresetExtensionEntries() {
+    const entries = [];
+
+    for (const key in extension_prompts) {
+        if (!Object.hasOwn(extension_prompts, key)
+            || OWN_PRESET_EXCLUDED_EXTENSION_KEYS.has(key)
+            || OWN_PRESET_EXCLUDED_EXTENSION_PREFIXES.some(prefix => key.startsWith(prefix))) {
+            continue;
+        }
+
+        const prompt = extension_prompts[key];
+        const value = String(prompt?.value ?? '');
+        if (!value.trim()) {
+            continue;
+        }
+
+        const position = ownPresetExtensionPosition(Number(prompt?.position));
+        if (!position) {
+            continue;
+        }
+
+        if (typeof prompt.filter === 'function') {
+            try {
+                if (!await prompt.filter()) {
+                    continue;
+                }
+            } catch (error) {
+                console.warn(`[InChatAgents] own-preset extension prompt filter failed for "${key}".`, error);
+                continue;
+            }
+        }
+
+        entries.push({ position, depth: Number(prompt?.depth) || 0, role: ownPresetExtensionRole(prompt?.role), content: value });
+    }
+
+    return entries;
+}
+
+/**
+ * Assembles an insert-output-only intercept agent's own request from its
+ * connection-profile preset: resolves the preset by name (a read, never a
+ * selectPreset switch), gathers character card fields and the live extension
+ * prompts (World Info depth entries included, already registered by the main
+ * generation's own scan this turn - see the module-level comment on
+ * OWN_PRESET_EXCLUDED_EXTENSION_PREFIXES), then hands them to the pure
+ * own-preset-prompt.js assembler. Any resolution failure degrades visibly to
+ * the 'context' promptSource rather than silently.
+ * @param {object} agent
+ * @param {{ agentPrompt: string, generationType: string, chatHistoryMessages: object[] }} options
+ * @returns {Promise<{ ok: true, messages: object[] } | { ok: false, reason: string }>}
+ */
+async function buildOwnPresetInterceptMessages(agent, { agentPrompt, generationType, chatHistoryMessages }) {
+    const profileId = resolveAgentConnectionProfile(agent);
+    const CMRS = getConnectionManagerRequestService();
+    let presetName = '';
+    if (profileId && CMRS && typeof CMRS.getProfile === 'function') {
+        try {
+            presetName = String(CMRS.getProfile(profileId)?.preset ?? '').trim();
+        } catch (error) {
+            console.warn(`[InChatAgents] own-preset connection profile lookup failed for "${profileId}".`, error);
+        }
+    }
+
+    if (!presetName) {
+        return { ok: false, reason: 'missing-profile-preset' };
+    }
+
+    let preset;
+    try {
+        preset = getContext()?.getPresetManager?.('openai')?.getCompletionPresetByName?.(presetName);
+    } catch (error) {
+        console.warn(`[InChatAgents] own-preset lookup failed for preset "${presetName}".`, error);
+    }
+
+    if (!preset) {
+        return { ok: false, reason: 'unresolvable-preset' };
+    }
+
+    const context = getContext();
+    const characterFields = typeof context?.getCharacterCardFields === 'function' ? context.getCharacterCardFields() : {};
+
+    // World Info before/after/depth is deliberately NOT re-scanned here. This runs
+    // mid-generation, inside the same CHAT_COMPLETION_PROMPT_READY handler the main
+    // request's own (already-complete) World Info scan ran just before; re-entering
+    // checkWorldInfo() a second time for the same turn is not a pattern anything else
+    // in this codebase does, and is not worth the risk for a side-channel agent
+    // request. worldInfoDepth entries that are also registered as ordinary IN_CHAT
+    // extension prompts (as ST's own WI depth injection does) still come through
+    // gatherOwnPresetExtensionEntries() below.
+    const extensionEntries = await gatherOwnPresetExtensionEntries();
+
+    const assembly = buildOwnPresetChatMessages({
+        preset,
+        generationType,
+        charDescription: characterFields.description,
+        charPersonality: characterFields.personality,
+        scenario: characterFields.scenario,
+        personaDescription: characterFields.persona,
+        dialogueExamplesText: characterFields.mesExamples,
+        chatHistoryMessages,
+        extensionEntries,
+    });
+
+    if (!assembly.ok) {
+        return { ok: false, reason: assembly.reason };
+    }
+
+    const substitutedMessages = assembly.messages.map(message => ({
+        role: message.role,
+        content: substituteParams(message.content),
+    }));
+
+    return {
+        ok: true,
+        messages: appendOwnPresetAgentTurn({ presetMessages: substitutedMessages, agentPrompt, generationType }),
+        profileId,
+        presetName,
+    };
+}
+
 async function runContextInterceptAgent(agent, currentContextText, generationType, contextFormat, options = {}) {
     const timing = options.timing === POST_MAIN_GENERATION_INTERCEPT_TIMING
         ? POST_MAIN_GENERATION_INTERCEPT_TIMING
@@ -4674,7 +4843,7 @@ async function runContextInterceptAgent(agent, currentContextText, generationTyp
     // Scoping only ever trims what the agent's own request sees; the context actually
     // inserted into and sent to the main model is built from currentContextText, unaffected.
     const agentContextText = typeof options.promptContextText === 'string' ? options.promptContextText : currentContextText;
-    // Main-prompt requests need the (scoped) chat messages themselves, which only the chat path provides.
+    // Own-preset requests need the (scoped) chat messages themselves, which only the chat path provides.
     const promptSource = Array.isArray(options.promptChatMessages)
         ? resolveContextInterceptPromptSource({
             applyMode,
@@ -4715,10 +4884,35 @@ async function runContextInterceptAgent(agent, currentContextText, generationTyp
         };
     }
 
-    const helperRequest = appendConfiguredHelperPrefillMessages(promptSource === 'main-prompt'
-        ? buildMainPromptInterceptMessages({ chatMessages: options.promptChatMessages, agentPrompt: expandedPrompt, generationType })
-        : buildContextInterceptMessages(expandedPrompt, agentContextText, generationType, contextFormat, timing, insertOutputOnly),
-    );
+    let ownPresetFallbackReason = null;
+    let helperMessages;
+    if (promptSource === 'own-preset') {
+        const ownPreset = await buildOwnPresetInterceptMessages(agent, {
+            agentPrompt: expandedPrompt,
+            generationType,
+            chatHistoryMessages: extractOwnPresetHistoryMessages(options.promptChatMessages),
+        });
+        if (ownPreset.ok) {
+            helperMessages = ownPreset.messages;
+            // Visible confirmation of which profile/preset actually got used, so "is it using
+            // the right preset" never has to be answered by guessing at the resolution chain.
+            baseResult.ownPresetProfileId = ownPreset.profileId;
+            baseResult.ownPresetName = ownPreset.presetName;
+        } else {
+            ownPresetFallbackReason = ownPreset.reason;
+            helperMessages = buildContextInterceptMessages(expandedPrompt, agentContextText, generationType, contextFormat, timing, insertOutputOnly);
+        }
+    } else {
+        helperMessages = buildContextInterceptMessages(expandedPrompt, agentContextText, generationType, contextFormat, timing, insertOutputOnly);
+    }
+
+    if (ownPresetFallbackReason) {
+        baseResult.promptSource = 'context';
+        baseResult.promptSourceFallbackReason = ownPresetFallbackReason;
+        console.warn(`[InChatAgents] own-preset intercept agent "${agent.name}" fell back to context: ${ownPresetFallbackReason}.`);
+    }
+
+    const helperRequest = appendConfiguredHelperPrefillMessages(helperMessages);
     const cancelRevision = agentGenerationCancelRevision;
     const skipChanges = timing === POST_MAIN_GENERATION_INTERCEPT_TIMING && Boolean(options?.skipChanges);
     const showRunningToast = skipChanges || shouldShowPreInterceptNotifications(agent);

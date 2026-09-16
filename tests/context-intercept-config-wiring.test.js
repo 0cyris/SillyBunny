@@ -87,33 +87,38 @@ describe('context intercept config wiring', () => {
         expect(source).toContain('runContextInterceptAgent(agent, contextText, activationSnapshot.generationType, \'chat\', { promptContextText, promptChatMessages });');
     });
 
-    test('runContextInterceptAgent builds a main-prompt request only from the chat path\'s scoped messages', () => {
+    test('runContextInterceptAgent builds an own-preset request only from the chat path\'s scoped messages, falling back to context on failure', () => {
         const source = getFunctionSource(runnerSource, 'runContextInterceptAgent');
 
-        expect(runnerSource).toContain('    buildMainPromptInterceptMessages,\n');
+        expect(runnerSource).toContain('    appendOwnPresetAgentTurn,\n');
         expect(runnerSource).toContain('    resolveContextInterceptPromptSource,\n');
         expect(source).toContain('const promptSource = Array.isArray(options.promptChatMessages)');
         expect(source).toContain('promptSource: agent?.preProcess?.promptSource,');
-        expect(source).toContain('buildMainPromptInterceptMessages({ chatMessages: options.promptChatMessages, agentPrompt: expandedPrompt, generationType })');
+        expect(source).toContain('buildOwnPresetInterceptMessages(agent, {');
+        expect(source).toContain('extractOwnPresetHistoryMessages(options.promptChatMessages)');
+        expect(source).toContain('ownPresetFallbackReason = ownPreset.reason;');
         expect(source).toContain('promptSource,');
+        expect(runnerSource).toContain('buildOwnPresetChatMessages(');
 
         const textSource = getFunctionSource(runnerSource, 'runPreGenerationInterceptorsOnText');
         expect(textSource).not.toContain('promptChatMessages');
     });
 
-    test('the sanitizer and run-history label record the prompt source', () => {
+    test('the sanitizer and run-history label record the prompt source and any fallback reason', () => {
         const sanitizer = getFunctionSource(runnerSource, 'sanitizePreGenerationInterceptRunForStorage');
-        expect(sanitizer).toContain('promptSource: result.promptSource === \'main-prompt\' ? \'main-prompt\' : \'context\',');
+        expect(sanitizer).toContain('promptSource: result.promptSource === \'own-preset\' ? \'own-preset\' : \'context\',');
+        expect(sanitizer).toContain('promptSourceFallbackReason');
 
         const label = getFunctionSource(indexSource, 'getPreGenerationInterceptModeLabel');
-        expect(label).toContain('entry?.promptSource === \'main-prompt\' ? `${label}, main prompt` : label');
+        expect(label).toContain('entry?.promptSource === \'own-preset\'');
+        expect(label).toContain('entry?.promptSourceFallbackReason');
     });
 
     test('the editor exposes the prompt source only for insert-output-only intercepts', () => {
         expect(editorHtml).toContain('id="ica--editor-pre-promptSource"');
-        expect(editorHtml).toContain('<option value="main-prompt">Main prompt + agent prompt</option>');
-        expect(indexSource).toContain('editorEl.find(\'#ica--editor-pre-promptSource\').val(preProcess.promptSource === \'main-prompt\' ? \'main-prompt\' : \'context\');');
-        expect(indexSource).toContain('promptSource: editorEl.find(\'#ica--editor-pre-promptSource\').val()?.toString() === \'main-prompt\' ? \'main-prompt\' : \'context\',');
+        expect(editorHtml).toContain('<option value="own-preset">Agent prompt + the agent\'s own preset</option>');
+        expect(indexSource).toContain('editorEl.find(\'#ica--editor-pre-promptSource\').val(preProcess.promptSource === \'own-preset\' ? \'own-preset\' : \'context\');');
+        expect(indexSource).toContain('promptSource: editorEl.find(\'#ica--editor-pre-promptSource\').val()?.toString() === \'own-preset\' ? \'own-preset\' : \'context\',');
 
         const visibilitySource = getFunctionSource(indexSource, 'updatePreProcessVisibility');
         expect(visibilitySource).toContain('editorEl.find(\'#ica--pre-prompt-source-row\').toggle(interceptVisible && rawApplyMode === \'wrap-insert-output-only\');');

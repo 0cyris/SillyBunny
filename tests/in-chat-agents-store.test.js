@@ -442,20 +442,23 @@ describe('in-chat agent scoped enabled state', () => {
         expect(store.getAgentById('agent-huge-scope').preProcess.contextRecentMessages).toBe(store.MAX_CONTEXT_RECENT_MESSAGES);
     });
 
-    test('normalizes promptSource to context unless explicitly main-prompt', async () => {
+    test('normalizes promptSource to context unless explicitly own-preset', async () => {
         const store = await importStore();
 
         expect(store.createDefaultAgent().preProcess.promptSource).toBe('context');
 
         store.loadAgents([
-            { id: 'agent-main-prompt', name: 'Main Prompt Agent', preProcess: { promptSource: 'main-prompt' } },
+            { id: 'agent-own-preset', name: 'Own Preset Agent', preProcess: { promptSource: 'own-preset' } },
             { id: 'agent-bogus-source', name: 'Bogus Source Agent', preProcess: { promptSource: 'preset' } },
             { id: 'agent-legacy-source', name: 'Legacy Agent', preProcess: {} },
+            // main-prompt is issue 12's removed value: no migration since it never shipped, so it just normalizes away.
+            { id: 'agent-removed-main-prompt', name: 'Removed Main Prompt Agent', preProcess: { promptSource: 'main-prompt' } },
         ]);
 
-        expect(store.getAgentById('agent-main-prompt').preProcess.promptSource).toBe('main-prompt');
+        expect(store.getAgentById('agent-own-preset').preProcess.promptSource).toBe('own-preset');
         expect(store.getAgentById('agent-bogus-source').preProcess.promptSource).toBe('context');
         expect(store.getAgentById('agent-legacy-source').preProcess.promptSource).toBe('context');
+        expect(store.getAgentById('agent-removed-main-prompt').preProcess.promptSource).toBe('context');
     });
 
     test('defaults agents to inline execution with companion settings available', async () => {

@@ -310,6 +310,19 @@ This ledger tracks intentional SillyBunny divergence in upstream-origin files. I
 | Last reviewed | 2026-07-25 PR #681. |
 | Owner | In-Chat Agents maintainer and prompt manager owner. |
 
+### `public/scripts/openai.js` - prompt segment tags for pre-generation intercepts
+| Field | Value |
+| --- | --- |
+| Area | Prompt assembly and pre-generation intercept agents. |
+| Divergence reason | Upstream flattens assembled prompts without recording which messages are chat history, and drops the `injected` flag depth injections carry into `populateChatHistory`. SillyBunny intercept agents with a "recent" context scope must trim only older chat history while keeping preset prompts, extension prompts, and depth injections. |
+| Target seam | `public/scripts/openai-prompt-segments.js`; consumed by `public/scripts/extensions/in-chat-agents/context-intercept-config.js`. |
+| Adapter shape | One import; copy `injected` onto the built Message in `populateChatHistory`; keep it when `squashSystemMessages` merges an injection; wrap the plain message in `MessageCollection.getChat` and `ChatCompletion.getChat` with `tagPromptSegment(..., classifyChatCompletionMessage(...))`. Tags are non-enumerable and never reach outbound payloads. |
+| Protecting tests | `tests/openai-prompt-segments.test.js`, `tests/context-intercept-config.test.js`, and `tests/context-intercept-config-wiring.test.js`. |
+| Validation | `npm run test:unit --prefix tests -- openai-prompt-segments.test.js context-intercept-config.test.js context-intercept-config-wiring.test.js`, `node --check public/scripts/openai.js`, `npm run lint`, `npm run check:frontend-budgets`, and `git diff --check`. |
+| Rollback path | Remove the import, the `injected` carries, and both tag calls. Untagged messages count as prompt content, so "recent" scope stops trimming rather than dropping prompts; no persisted data cleanup is required. |
+| Last reviewed | 2026-09-14 branch `feat/agent-tool-calling`. |
+| Owner | In-Chat Agents maintainer. |
+
 ### `src/endpoints/backends/chat-completions.js`, `public/scripts/openai.js`, and `public/index.html` - claude-fable-5 request compatibility
 | Field | Value |
 | --- | --- |

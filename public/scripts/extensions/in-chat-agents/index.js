@@ -3017,7 +3017,7 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
     editorEl.find('#ica--editor-pre-maxTokens').val(preProcess.maxTokens ?? DEFAULT_AGENT_MAX_TOKENS);
     editorEl.find('#ica--editor-pre-contextScope').val(preProcess.contextScope === 'recent' ? 'recent' : 'full');
     editorEl.find('#ica--editor-pre-contextRecentMessages').val(preProcess.contextRecentMessages ?? DEFAULT_CONTEXT_RECENT_MESSAGES);
-    editorEl.find('#ica--editor-pre-promptSource').val(preProcess.promptSource === 'main-prompt' ? 'main-prompt' : 'context');
+    editorEl.find('#ica--editor-pre-promptSource').val(preProcess.promptSource === 'own-preset' ? 'own-preset' : 'context');
 
     // Post-process
     const postProcessType = agent.postProcess.type === 'append' ? 'append' : 'extract';
@@ -3926,7 +3926,7 @@ async function openEditor(agentId = null, { draft = null, autoOpenCompanionMaker
         maxTokens: Number(editorEl.find('#ica--editor-pre-maxTokens').val()) || DEFAULT_AGENT_MAX_TOKENS,
         contextScope: editorEl.find('#ica--editor-pre-contextScope').val()?.toString() === 'recent' ? 'recent' : 'full',
         contextRecentMessages: Number(editorEl.find('#ica--editor-pre-contextRecentMessages').val()) || DEFAULT_CONTEXT_RECENT_MESSAGES,
-        promptSource: editorEl.find('#ica--editor-pre-promptSource').val()?.toString() === 'main-prompt' ? 'main-prompt' : 'context',
+        promptSource: editorEl.find('#ica--editor-pre-promptSource').val()?.toString() === 'own-preset' ? 'own-preset' : 'context',
     };
 
     if (isCompanionAgent(agent) && !agent.prompt.trim()) {
@@ -4889,12 +4889,25 @@ function buildPromptTransformDiffMarkup(beforeText, afterText) {
     }).join('');
 }
 
+const OWN_PRESET_FALLBACK_REASON_LABELS = {
+    'missing-profile-preset': 'no preset on profile',
+    'unresolvable-preset': 'preset not found',
+    'no-prompt-order': 'preset has no prompt order',
+};
+
 function getPreGenerationInterceptModeLabel(entry) {
     const mode = String(entry?.applyMode ?? 'replace');
     const timing = entry?.timing === 'post-main-generation' ? 'post-main' : 'pre-gen';
     if (mode === 'wrap') {
         const label = entry?.insertOutputOnly === true ? `${timing} insert-output-only` : `${timing} wrap`;
-        return entry?.promptSource === 'main-prompt' ? `${label}, main prompt` : label;
+        if (entry?.promptSource === 'own-preset') {
+            return entry?.ownPresetName ? `${label}, own preset: ${entry.ownPresetName}` : `${label}, own preset`;
+        }
+        if (entry?.promptSourceFallbackReason) {
+            const reasonLabel = OWN_PRESET_FALLBACK_REASON_LABELS[entry.promptSourceFallbackReason] || entry.promptSourceFallbackReason;
+            return `${label}, own preset unavailable (${reasonLabel})`;
+        }
+        return label;
     }
     if (mode === 'patch') {
         return `${timing} patch`;
@@ -6155,6 +6168,12 @@ async function refinePromptWithAI(currentPrompt, category, phase, connectionProf
     populateGlobalExecutionModeDropdown();
     populateGlobalHelperPrefillField();
     populateHiddenMainGenerationToolNamesSelect();
+    // Other extensions register tools after this panel mounts, so refresh the list whenever the agents tab opens.
+    document.addEventListener('sb:shell-tab-activated', event => {
+        if (event?.detail?.tabId === 'agents') {
+            populateHiddenMainGenerationToolNamesSelect();
+        }
+    });
     $('#ica--connectionProfile').on('change', function () {
         setGlobalSettings({ connectionProfile: this.value });
         persistExtensionState();

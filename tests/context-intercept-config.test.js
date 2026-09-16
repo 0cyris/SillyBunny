@@ -1,7 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
 
 import {
-    buildMainPromptInterceptMessages,
+    appendOwnPresetAgentTurn,
     isInsertOutputOnlyIntercept,
     normalizeInterceptApplyMode,
     resolveContextInterceptPromptSource,
@@ -181,38 +181,39 @@ describe('selectRecentChatMessages', () => {
 describe('resolveContextInterceptPromptSource', () => {
     const insertOnly = { applyMode: 'wrap', insertOutputOnly: true, contextFormat: 'chat', timing: 'pre-generation' };
 
-    test('uses the main prompt only for an insert-output-only chat intercept that asks for it', () => {
-        expect(resolveContextInterceptPromptSource({ ...insertOnly, promptSource: 'main-prompt' })).toBe('main-prompt');
+    test('uses own-preset only for an insert-output-only chat intercept that asks for it', () => {
+        expect(resolveContextInterceptPromptSource({ ...insertOnly, promptSource: 'own-preset' })).toBe('own-preset');
     });
 
     test('defaults to context when the setting is missing or unrecognized', () => {
         expect(resolveContextInterceptPromptSource(insertOnly)).toBe('context');
         expect(resolveContextInterceptPromptSource({ ...insertOnly, promptSource: 'preset' })).toBe('context');
+        expect(resolveContextInterceptPromptSource({ ...insertOnly, promptSource: 'main-prompt' })).toBe('context');
         expect(resolveContextInterceptPromptSource()).toBe('context');
     });
 
     test('falls back to context for modes that need the context as data', () => {
-        expect(resolveContextInterceptPromptSource({ ...insertOnly, promptSource: 'main-prompt', insertOutputOnly: false })).toBe('context');
-        expect(resolveContextInterceptPromptSource({ ...insertOnly, promptSource: 'main-prompt', applyMode: 'patch' })).toBe('context');
-        expect(resolveContextInterceptPromptSource({ ...insertOnly, promptSource: 'main-prompt', applyMode: 'replace' })).toBe('context');
+        expect(resolveContextInterceptPromptSource({ ...insertOnly, promptSource: 'own-preset', insertOutputOnly: false })).toBe('context');
+        expect(resolveContextInterceptPromptSource({ ...insertOnly, promptSource: 'own-preset', applyMode: 'patch' })).toBe('context');
+        expect(resolveContextInterceptPromptSource({ ...insertOnly, promptSource: 'own-preset', applyMode: 'replace' })).toBe('context');
     });
 
     test('falls back to context for text prompts and post-main timing', () => {
-        expect(resolveContextInterceptPromptSource({ ...insertOnly, promptSource: 'main-prompt', contextFormat: 'text' })).toBe('context');
-        expect(resolveContextInterceptPromptSource({ ...insertOnly, promptSource: 'main-prompt', timing: 'post-main-generation' })).toBe('context');
+        expect(resolveContextInterceptPromptSource({ ...insertOnly, promptSource: 'own-preset', contextFormat: 'text' })).toBe('context');
+        expect(resolveContextInterceptPromptSource({ ...insertOnly, promptSource: 'own-preset', timing: 'post-main-generation' })).toBe('context');
     });
 });
 
-describe('buildMainPromptInterceptMessages', () => {
-    test('sends the main prompt as real messages followed by the agent prompt as the final user turn', () => {
-        const chatMessages = [
+describe('appendOwnPresetAgentTurn', () => {
+    test('appends the agent prompt and instruction as the final user turn after the assembled preset messages', () => {
+        const presetMessages = [
             { role: 'system', content: 'Use read(path) to look up game data.' },
             { role: 'user', content: 'How much damage does a lasgun do?' },
         ];
 
-        const messages = buildMainPromptInterceptMessages({ chatMessages, agentPrompt: 'Look it up.', generationType: 'normal' });
+        const messages = appendOwnPresetAgentTurn({ presetMessages, agentPrompt: 'Look it up.', generationType: 'normal' });
 
-        expect(messages.slice(0, 2)).toEqual(chatMessages);
+        expect(messages.slice(0, 2)).toEqual(presetMessages);
         expect(messages).toHaveLength(3);
         expect(messages[2].role).toBe('user');
         expect(messages[2].content.startsWith('Look it up.\n\n')).toBe(true);
@@ -220,17 +221,17 @@ describe('buildMainPromptInterceptMessages', () => {
         expect(messages[2].content.endsWith('Generation type: normal')).toBe(true);
     });
 
-    test('copies messages so the chat sent to the main model is never mutated', () => {
-        const chatMessages = [tagPromptSegment({ role: 'system', content: 'prompt' }, 'prompt')];
+    test('copies messages so the assembled preset messages are never mutated', () => {
+        const presetMessages = [tagPromptSegment({ role: 'system', content: 'prompt' }, 'prompt')];
 
-        const [copied] = buildMainPromptInterceptMessages({ chatMessages, agentPrompt: 'x' });
+        const [copied] = appendOwnPresetAgentTurn({ presetMessages, agentPrompt: 'x' });
         copied.content = 'changed';
 
-        expect(chatMessages[0].content).toBe('prompt');
+        expect(presetMessages[0].content).toBe('prompt');
     });
 
-    test('tolerates missing or malformed chat messages', () => {
-        expect(buildMainPromptInterceptMessages({ chatMessages: [null, 'text'], agentPrompt: 'x' })).toHaveLength(1);
-        expect(buildMainPromptInterceptMessages()).toHaveLength(1);
+    test('tolerates missing or malformed preset messages', () => {
+        expect(appendOwnPresetAgentTurn({ presetMessages: [null, 'text'], agentPrompt: 'x' })).toHaveLength(1);
+        expect(appendOwnPresetAgentTurn()).toHaveLength(1);
     });
 });

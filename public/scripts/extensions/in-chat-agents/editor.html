@@ -73,7 +73,7 @@
             </label>
         </div>
         <div class="ica--editor-row" id="ica--tool-calling-row">
-            <label class="checkbox_label"><input type="checkbox" id="ica--editor-toolCalling-enabled" /><span>Allow this agent to call registered tools <small>(companion and intercept agents with a connection profile; only the agent's final text is used)</small></span></label>
+            <label class="checkbox_label"><input type="checkbox" id="ica--editor-toolCalling-enabled" /><span>Let this agent call registered tools <small>(companion agents and intercept agents that have a connection profile. SillyBunny uses only the final text from the agent.)</small></span></label>
         </div>
         <div class="ica--editor-row" id="ica--tool-calling-mode-row" style="display:none">
             <label>Tool Selection
@@ -87,7 +87,7 @@
             <label>Selected Tools
                 <select id="ica--editor-toolCalling-selectedTools" class="text_pole" multiple size="5"></select>
             </label>
-            <div class="ica--regex-note">Only these tools are attached to this agent's request, even if other tools are registered.</div>
+            <div class="ica--regex-note">SillyBunny attaches only these tools to the request from this agent. The agent does not receive the other registered tools.</div>
         </div>
         <textarea id="ica--editor-prompt" class="text_pole textarea_compact" rows="8" placeholder="Write your agent prompt here. Supports macros: &#123;&#123;char&#125;&#125;, &#123;&#123;user&#125;&#125;, &#123;&#123;random::a::b::c&#125;&#125;, etc."></textarea>
     </div>
@@ -357,16 +357,16 @@
                 </div>
             </div>
             <div class="ica--editor-row" id="ica--pre-prompt-source-row" style="display:none">
-                <label>Agent Request <small>(what this agent's own request is built from)</small>
+                <label title="The agent gets its own prompt order and its own context size. If the preset is missing, the agent uses the outgoing context as data instead.">Agent Request <small>(the content of the request from this agent)</small>
                     <select id="ica--editor-pre-promptSource" class="text_pole">
                         <option value="context">Agent prompt + outgoing context as data</option>
-                        <option value="main-prompt">Main prompt + agent prompt</option>
+                        <option value="own-preset">Agent prompt + the agent's own preset</option>
                     </select>
                 </label>
-                <div class="ica--regex-note">Main prompt sends this agent the same prompt the main model is about to receive (preset prompts, character card, World Info, and every extension prompt) as real messages, with the agent prompt added last, so instructions from the preset and other extensions reach the agent as instructions. Chat Completion only.</div>
+                <div class="ica--regex-note">Own preset builds this agent's request from the preset in its connection profile, with the character card, World Info, and the extension prompts. Use it with Chat Completion only.</div>
             </div>
             <div class="ica--editor-row" id="ica--pre-context-scope-row">
-                <label>Agent's Own Context <small>(how much of the outgoing context this agent's own request sees; the context sent to the main model is unaffected)</small>
+                <label>Agent's Own Context <small>(the quantity of the outgoing context in the request from this agent. This setting does not change the context that goes to the main model.)</small>
                     <select id="ica--editor-pre-contextScope" class="text_pole">
                         <option value="full">Full outgoing context</option>
                         <option value="recent">Only the most recent chat history</option>
@@ -374,12 +374,12 @@
                 </label>
             </div>
             <div class="ica--editor-row" id="ica--pre-context-recent-row" style="display:none">
-                <label>Recent Message Count
+                <label title="The agent also receives the in-chat injections. SillyBunny cannot divide a Text Completion prompt into messages. As a result, a Text Completion agent always uses the full context.">Recent Message Count
                     <input type="number" id="ica--editor-pre-contextRecentMessages" class="text_pole" min="1" max="200" value="10" />
                 </label>
-                <div class="ica--regex-note">Only older chat history is dropped; preset prompts, the character card, World Info, and extension prompts (including in-chat injections) are always kept. Text-completion prompts can't be split by message and always use the full context regardless of this setting.</div>
+                <div class="ica--regex-note">SillyBunny removes only the older chat history, and always keeps the preset prompts, the character card, World Info, and the extension prompts.</div>
             </div>
-            <div class="ica--regex-note">Pre-generation timing runs before the main model receives the assembled context. Post-main timing runs after the main model finishes and before the response is shown or saved. Agents run by Order. Replace mode expects a full replacement context in pre-generation timing; for chat completion that must be a JSON array of chat messages. Wrap and patch add a new message on chat-completion APIs using the Role below. Insert output only asks the agent for just the text to insert (e.g. retrieved facts), never a copy of the context; pre-generation timing only.</div>
+            <div class="ica--regex-note">Pre-generation timing runs before the main model receives the assembled context. Post-main timing runs after the main model finishes and before the response is shown or saved. Agents run by Order. Replace mode expects a full replacement context in pre-generation timing; for chat completion that must be a JSON array of chat messages. Wrap and patch add a new message on chat-completion APIs using the Role below. Insert output only asks the agent for the text to insert, and not for a copy of the context. Use this apply mode with pre-generation timing only.</div>
         </div>
         <div class="ica--regex-note" id="ica--pre-injection-note">Inject mode uses the existing extension prompt path. Position, Depth, Role, and World Info scanning control where the prompt is inserted.</div>
         <div class="ica--editor-row flex-container flexGap5">

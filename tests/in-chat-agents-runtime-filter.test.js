@@ -157,6 +157,7 @@ beforeEach(async () => {
     jest.unstable_mockModule('../public/scripts/extensions/in-chat-agents/profile-utils.js', () => ({
         getConnectionProfileDisplayName: id => id,
         getConnectionProfileModelName: () => '',
+        getConnectionManagerRequestService: () => null,
     }));
     jest.unstable_mockModule('../public/scripts/extensions/in-chat-agents/tool-action-registry.js', () => ({
         getToolAction: () => toolAction,

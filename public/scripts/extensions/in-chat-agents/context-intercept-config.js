@@ -16,12 +16,13 @@ const INSERT_OUTPUT_ONLY_INSTRUCTION = 'You are producing a short block of text 
     + 'insert (e.g. retrieved facts). Never return the outgoing context, a JSON array, role labels, or a '
     + 'transcript. If there is nothing to insert, return an empty response.';
 
-const MAIN_PROMPT_INSERT_OUTPUT_ONLY_INSTRUCTION = 'You are an in-chat agent step running before the main model '
-    + 'replies, not the main model. Everything before this message is the main model\'s prompt: follow its '
-    + 'instructions, tool guidance, and data to carry out the agent instructions in this message, but do not '
-    + 'reply to or continue the conversation. Return only the text to insert into the main model\'s context '
-    + '(e.g. retrieved facts). Never return a transcript, a JSON array, or role labels. If there is nothing '
-    + 'to insert, return an empty response.';
+export const OWN_PRESET_INSERT_OUTPUT_ONLY_INSTRUCTION = 'You are an in-chat agent step assembled from your own '
+    + 'connection profile preset, not the main model. Everything before this message is your own preset\'s '
+    + 'prompt, character card, World Info, and extension prompts: follow its instructions, tool guidance, and '
+    + 'data to carry out the agent instructions in this message, but do not reply to or continue the '
+    + 'conversation. Return only the text to insert into the main model\'s context (e.g. retrieved facts). '
+    + 'Never return a transcript, a JSON array, or role labels. If there is nothing to insert, return an empty '
+    + 'response.';
 
 /**
  * Normalizes a stored applyMode value: only 'wrap' and 'patch' are
@@ -131,32 +132,30 @@ export function selectRecentChatMessages(messages, count) {
 }
 
 /**
- * Resolves whether an intercept agent's own request is built from the main
- * prompt itself rather than from the agent prompt plus the context as data.
- * Only insert-output-only agents in chat format can use the main prompt: every
- * other apply mode needs the context as data to rewrite or echo it.
+ * Resolves whether an intercept agent's own request is built from its own
+ * connection-profile preset rather than from the agent prompt plus the
+ * context as data. Only insert-output-only agents in chat format can use
+ * own-preset assembly: every other apply mode needs the context as data to
+ * rewrite or echo it.
  * @param {{ applyMode?: unknown, insertOutputOnly?: unknown, promptSource?: unknown, contextFormat?: string, timing?: string }} [options]
- * @returns {'context'|'main-prompt'}
+ * @returns {'context'|'own-preset'}
  */
 export function resolveContextInterceptPromptSource({ applyMode, insertOutputOnly, promptSource, contextFormat, timing = '' } = {}) {
-    if (promptSource !== 'main-prompt' || contextFormat !== 'chat') {
+    if (promptSource !== 'own-preset' || contextFormat !== 'chat') {
         return 'context';
     }
 
-    return isInsertOutputOnlyIntercept({ applyMode, insertOutputOnly }, timing) ? 'main-prompt' : 'context';
+    return isInsertOutputOnlyIntercept({ applyMode, insertOutputOnly }, timing) ? 'own-preset' : 'context';
 }
 
 /**
- * Builds a main-prompt intercept request: the main model's prompt as real
- * messages, so instructions from the preset and other extensions reach the
- * agent as instructions rather than as data, followed by the agent prompt as
- * the final user turn. Copies each message so the chat sent to the main model
- * is never mutated.
- * @param {{ chatMessages?: object[], agentPrompt?: string, generationType?: string }} [options]
+ * Appends the own-preset insert-output-only instruction and the agent prompt
+ * as the final user turn onto an already-assembled own-preset request.
+ * @param {{ presetMessages?: object[], agentPrompt?: string, generationType?: string }} [options]
  * @returns {object[]}
  */
-export function buildMainPromptInterceptMessages({ chatMessages, agentPrompt = '', generationType = '' } = {}) {
-    const promptMessages = (Array.isArray(chatMessages) ? chatMessages : [])
+export function appendOwnPresetAgentTurn({ presetMessages, agentPrompt = '', generationType = '' } = {}) {
+    const promptMessages = (Array.isArray(presetMessages) ? presetMessages : [])
         .filter(message => message && typeof message === 'object')
         .map(message => ({ ...message }));
 
@@ -164,7 +163,7 @@ export function buildMainPromptInterceptMessages({ chatMessages, agentPrompt = '
         ...promptMessages,
         {
             role: 'user',
-            content: `${agentPrompt}\n\n${MAIN_PROMPT_INSERT_OUTPUT_ONLY_INSTRUCTION}\n\nGeneration type: ${generationType}`,
+            content: `${agentPrompt}\n\n${OWN_PRESET_INSERT_OUTPUT_ONLY_INSTRUCTION}\n\nGeneration type: ${generationType}`,
         },
     ];
 }

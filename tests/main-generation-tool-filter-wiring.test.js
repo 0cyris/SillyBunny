@@ -75,4 +75,8 @@ describe('keep agent-only tools out of main generation', () => {
         expect(indexSource).toContain('$(\'#ica--hiddenMainGenerationToolNames\').on(\'change\', function () {');
         expect(indexSource).toContain('setHiddenMainGenerationToolNames($(this).val() ?? []);');
     });
+
+    test('the hidden-tools picker refreshes when the agents tab opens, picking up tools registered after mount', () => {
+        expect(indexSource).toContain('document.addEventListener(\'sb:shell-tab-activated\', event => {\n        if (event?.detail?.tabId === \'agents\') {\n            populateHiddenMainGenerationToolNamesSelect();');
+    });
 });

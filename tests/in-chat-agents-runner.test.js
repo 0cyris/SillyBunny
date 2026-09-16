@@ -59,6 +59,7 @@ describe('in-chat agent post-processing runner', () => {
     let contextCharacterId;
     let contextGroups;
     let contextGroupId;
+    let contextPresetManager;
     let getWorldInfoPrompt;
     let pathfinderRuntimeSettings;
     let replacePathfinderSettings;
@@ -157,6 +158,7 @@ describe('in-chat agent post-processing runner', () => {
         contextCharacterId = undefined;
         contextGroups = [];
         contextGroupId = null;
+        contextPresetManager = { getCompletionPresetByName: jest.fn(() => undefined) };
         getWorldInfoPrompt = jest.fn(async () => ({ worldInfoString: '' }));
         pathfinderRuntimeSettings = { pipelinePrompts: {}, pipelines: {} };
         replacePathfinderSettings = jest.fn(settings => {
@@ -224,7 +226,7 @@ describe('in-chat agent post-processing runner', () => {
                 }));
             }),
             extension_prompt_roles: { SYSTEM: 0, USER: 1, ASSISTANT: 2 },
-            extension_prompt_types: { IN_PROMPT: 0, IN_CHAT: 1 },
+            extension_prompt_types: { IN_PROMPT: 0, IN_CHAT: 1, BEFORE_PROMPT: 2 },
             extension_prompts: extensionPrompts,
             eventSource,
             event_types: eventTypes,
@@ -297,6 +299,7 @@ describe('in-chat agent post-processing runner', () => {
                         mesExamples: character.mes_example,
                     };
                 }),
+                getPresetManager: jest.fn(() => contextPresetManager),
             })),
         }));
 
@@ -4744,6 +4747,73 @@ describe('in-chat agent post-processing runner', () => {
         })]);
         expect(chat[0].extra.inChatAgentPreGenerationInterceptHistory[0].beforeText).toContain('original user prompt');
         expect(JSON.parse(chat[0].extra.inChatAgentPreGenerationInterceptHistory[0].afterText)[0].content).toBe('<patch>\npatch note\n</patch>');
+    });
+
+    test('own-preset intercept agents build their request from the connection profile\'s preset, not the main context', async () => {
+        const taskPreset = {
+            openai_max_context: 8192,
+            prompt_order: [{
+                character_id: 100001,
+                order: [
+                    { identifier: 'main', enabled: true },
+                    { identifier: 'chatHistory', enabled: true },
+                ],
+            }],
+            prompts: [
+                { identifier: 'main', role: 'system', content: 'TASK PRESET MAIN PROMPT, not the main context.' },
+                { identifier: 'chatHistory', marker: true },
+            ],
+        };
+        contextPresetManager.getCompletionPresetByName = jest.fn(name => name === 'Task Preset' ? taskPreset : undefined);
+        connectionManagerRequestService = {
+            getProfile: jest.fn(profileId => profileId === 'task-profile' ? { preset: 'Task Preset', model: 'task-model' } : null),
+            sendRequest: jest.fn(async () => ({ content: 'insert this' })),
+        };
+        enabledAgents = [createPreInterceptAgent({
+            preProcess: {
+                applyMode: 'wrap',
+                insertOutputOnly: true,
+                promptSource: 'own-preset',
+            },
+        })];
+        enabledAgents[0].connectionProfile = 'task-profile';
+
+        const { initAgentRunner } = await import('../public/scripts/extensions/in-chat-agents/agent-runner.js');
+        initAgentRunner();
+
+        await eventSource.emit(eventTypes.GENERATION_STARTED, 'normal', {}, false);
+        const originalChat = [
+            { role: 'system', content: 'MAIN CONTEXT preset system prompt.' },
+            { role: 'user', content: 'user turn from the main context' },
+        ];
+        const eventData = { chat: originalChat, dryRun: false };
+        await eventSource.emit(eventTypes.CHAT_COMPLETION_PROMPT_READY, eventData);
+
+        expect(contextPresetManager.getCompletionPresetByName).toHaveBeenCalledWith('Task Preset');
+        expect(connectionManagerRequestService.sendRequest).toHaveBeenCalledTimes(1);
+        const [sentProfileId, sentMessages] = connectionManagerRequestService.sendRequest.mock.calls[0];
+        expect(sentProfileId).toBe('task-profile');
+        expect(sentMessages.some(m => m.content?.includes('TASK PRESET MAIN PROMPT'))).toBe(true);
+        expect(sentMessages.some(m => m.content?.includes('MAIN CONTEXT preset system prompt'))).toBe(false);
+
+        chat.push({
+            name: 'Assistant',
+            mes: 'Chat reply',
+            is_user: false,
+            is_system: false,
+            extra: {},
+        });
+        await eventSource.emit(eventTypes.MESSAGE_RECEIVED, 0, 'normal');
+        await eventSource.emit(eventTypes.GENERATION_ENDED, chat.length);
+        await waitFor(() => Array.isArray(chat[0].extra.inChatAgentPreGenerationInterceptHistory));
+
+        // The resolved profile/preset is recorded on the run so "which preset actually ran"
+        // never has to be answered by guessing at the connection-profile resolution chain.
+        expect(chat[0].extra.inChatAgentPreGenerationInterceptHistory).toEqual([expect.objectContaining({
+            promptSource: 'own-preset',
+            ownPresetProfileId: 'task-profile',
+            ownPresetName: 'Task Preset',
+        })]);
     });
 
     test('skips pre-generation intercepts during dry runs and outside active generation', async () => {

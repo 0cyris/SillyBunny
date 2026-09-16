@@ -6606,6 +6606,7 @@ class MessageCollection {
     getChat() {
         return this.collection.reduce((acc, message) => {
             if (message.content || message.tool_calls) {
+                // SillyBunny: tag the prompt segment for prompt-ready listeners; non-enumerable, never serialized.
                 acc.push(tagPromptSegment({
                     role: message.role,
                     content: message.content,
@@ -6713,7 +6714,7 @@ export class ChatCompletion {
             if (shouldSquash(message)) {
                 if (lastMessage && shouldSquash(lastMessage)) {
                     lastMessage.content += '\n' + message.content;
-                    // A squashed-in depth injection must not become trimmable chat history.
+                    // SillyBunny: a squashed-in depth injection must not become trimmable chat history.
                     if (message.injected === true) {
                         lastMessage.injected = true;
                     }
@@ -6932,7 +6933,7 @@ export class ChatCompletion {
                     ...(item.signature ? { signature: item.signature } : {}),
                     ...(item.reasoning ? { reasoning: item.reasoning } : {}),
                 };
-                // Non-enumerable, so it never reaches the request payload.
+                // SillyBunny: tag the prompt segment for prompt-ready listeners; non-enumerable, so it never reaches the request payload.
                 chat.push(tagPromptSegment(message, classifyChatCompletionMessage(item)));
             } else {
                 this.log(`Skipping invalid or empty message in collection: ${JSON.stringify(item)}`);

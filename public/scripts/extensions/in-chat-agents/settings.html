@@ -180,9 +180,9 @@
                 <small class="ica--profile-help">Use [system], [user], or [assistant] blocks. Text before any header is treated as [assistant].</small>
             </label>
             <label class="ica--profile-label">
-                <span>Tools Hidden From Main Generation</span>
+                <span>Tools to Hide From Main Generation</span>
                 <select id="ica--hiddenMainGenerationToolNames" class="text_pole" multiple size="5"></select>
-                <small class="ica--profile-help">Selected tools stay available to tool-calling agents but are removed from the main model's own request, keeping their schemas out of its context. Some tool providers only register a tool while the main preset's function calling is on, even if it ends up hidden here.</small>
+                <small class="ica--profile-help">The agents that call tools keep access to the selected tools. SillyBunny removes these tools from the request to the main model. As a result, their schemas do not go into the context of the main model. Some extensions register a tool only when function calling is on in the main preset. This condition applies also to a tool that you hide here.</small>
             </label>
             <label class="checkbox_label" title="Keep enabled In-Chat Agents separate between Individual chats and Group chats.">
                 <input type="checkbox" id="ica--separateRecentChats" />
